@@ -1,0 +1,58 @@
+# ── Python / Backend ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Base SQLite (données locales)
+backend/tasks.db
+backend/tasks.test.db
+
+# Données OCR (PDFs uploadés et sorties Chandra)
+backend/data/
+
+# Variables d'environnement Python
+local.env
+.env
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+node_modules/
+dist/
+.cache/
+
+# Variables d'environnement Vite
+frontend/.env.local
+frontend/.env.*.local
+
+# ── Éditeurs & OS ─────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Tests & Coverage ──────────────────────────────────────────────────────────
+.coverage
+htmlcov/
+coverage/
+.pytest_cache/
