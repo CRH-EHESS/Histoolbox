@@ -107,8 +107,9 @@ Note sur PDF.js : Toujours utiliser pdfjs-dist@3.4.120 avec @react-pdf-viewer po
 
 ### Décisions techniques actées lors du développement MVP
 - **Gestionnaire de paquets Python :** `uv` (pas pip, pas de requirements.txt)
-- **Chandra CLI :** `chandra <pdf_path> <output_dir> --method vllm` — crée un sous-répertoire `<output_dir>/<stem>/` contenant `<stem>.md`, `<stem>.html`, `<stem>_metadata.json`
-- **Chandra vLLM :** `chandra_vllm` à lancer séparément en local (port 8000 par défaut)
+- **Chandra API Python :** `InferenceManager(method="vllm")` instancié une fois au démarrage du module (`self.model = None`, zéro cold-start) ; `load_file` rastérise le PDF, `generate()` appelle le vLLM via HTTP ; les fichiers `.md`/`.html`/`_metadata.json` sont écrits dans `<output_dir>/<stem>/` par `_assemble_and_persist`
+- **Chandra vLLM :** `chandra_vllm` à lancer séparément en local (port 8000 par défaut) ; `VLLM_BASE_URL` (défaut `http://localhost:8000`) contrôle l'URL utilisée par le pre-flight et l'inférence
+- **Logging backend :** `loguru` — niveau contrôlé par `LOG_LEVEL` (défaut `INFO`) ; en `DEBUG`, chaque étape est tracée : pre-flight, chargement PDF, durée inférence par page
 - **Persistance backend :** SQLite sans ORM (module `sqlite3` stdlib) — fichier `tasks.db`
 - **Export .docx :** client-side via `docx` (npm)
 - **Navigation :** React Router v7
@@ -163,3 +164,23 @@ histoolbox/
 - **Don't Over-engineer :** Ne pas anticiper des fonctionnalités futures non définies dans ce cahier des charges.
 - **Testing :** Écrire des tests unitaires pour les fonctions critiques (ex. gestion de l'état, logique de polling).
 - **Performance :** Optimiser le rendu PDF et l'édition Markdown pour les documents volumineux.
+
+---
+
+## 9. Convention de commits (Gitmoji + type)
+
+Format : `<gitmoji> <type>: <description courte>`
+
+| Gitmoji | Type | Usage |
+|---------|------|-------|
+| ✨ | `feat` | Nouvelle fonctionnalité |
+| 🐛 | `fix` | Correction de bug |
+| ♻️ | `refactor` | Refactoring sans changement de comportement |
+| ✅ | `test` | Ajout ou modification de tests |
+| 📝 | `docs` | Documentation (README, copilot-instructions, commentaires) |
+| 🔧 | `chore` | Configuration, dépendances, outillage |
+
+Exemples :
+- `✨ feat: ajout de l'export .docx côté client`
+- `🐛 fix: correction du chemin de sortie Chandra (sous-répertoire)`
+- `📝 docs: mise à jour du README backend (port 8001)`

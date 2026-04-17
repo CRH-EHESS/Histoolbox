@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { usePolling } from "../hooks/usePolling";
 
 /**
@@ -7,7 +7,31 @@ import { usePolling } from "../hooks/usePolling";
  */
 export function OCRWaitingPage() {
   const { taskId } = useParams<{ taskId: string }>();
-  usePolling(taskId ?? null);
+  const navigate = useNavigate();
+  const { status, errorMessage } = usePolling(taskId ?? null);
+
+  if (status === "error") {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-6 text-center p-8">
+        <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+          <span className="text-red-600 text-2xl">✕</span>
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold mb-1 text-red-700">Échec du traitement</h1>
+          <p className="text-stone-500 text-sm max-w-sm">
+            {errorMessage ?? "Une erreur est survenue lors de la transcription."}
+          </p>
+        </div>
+        <button
+          onClick={() => navigate("/")}
+          className="px-4 py-2 bg-stone-800 text-white rounded-lg text-sm hover:bg-stone-700 transition-colors"
+        >
+          Retour à l'accueil
+        </button>
+        <p className="text-xs text-stone-300 font-mono">{taskId}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center justify-center h-full gap-6 text-center p-8">

@@ -3,12 +3,13 @@ Couche d'accès SQLite (sqlite3 stdlib, zéro ORM).
 
 Table :
     tasks(
-        id          TEXT PRIMARY KEY,
-        status      TEXT NOT NULL,          -- pending | processing | completed | error
-        pdf_path    TEXT NOT NULL,
-        output_dir  TEXT NOT NULL,
-        created_at  INTEGER NOT NULL,
-        updated_at  INTEGER NOT NULL
+        id            TEXT PRIMARY KEY,
+        status        TEXT NOT NULL,          -- pending | processing | completed | error
+        pdf_path      TEXT NOT NULL,
+        output_dir    TEXT NOT NULL,
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL,
+        error_message TEXT
     )
 """
 
@@ -35,15 +36,21 @@ def init_db() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS tasks (
-                id          TEXT PRIMARY KEY,
-                status      TEXT NOT NULL,
-                pdf_path    TEXT NOT NULL,
-                output_dir  TEXT NOT NULL,
-                created_at  INTEGER NOT NULL,
-                updated_at  INTEGER NOT NULL
+                id            TEXT PRIMARY KEY,
+                status        TEXT NOT NULL,
+                pdf_path      TEXT NOT NULL,
+                output_dir    TEXT NOT NULL,
+                created_at    INTEGER NOT NULL,
+                updated_at    INTEGER NOT NULL,
+                error_message TEXT
             )
             """
         )
+        # Migration additive : ajoute la colonne sur une DB existante sans error_message
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN error_message TEXT")
+        except Exception:
+            pass  # colonne déjà présente
         # Tâches bloquées en 'processing' lors d'un crash précédent → error
         conn.execute(
             "UPDATE tasks SET status = 'error', updated_at = ? WHERE status = 'processing'",
@@ -67,6 +74,16 @@ def update_task_status(task_id: str, status: str) -> None:
         conn.execute(
             "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
             (status, int(time.time()), task_id),
+        )
+        conn.commit()
+
+
+def update_task_error(task_id: str, message: str) -> None:
+    """Marque une tâche comme 'error' en persistant le message d'erreur."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE tasks SET status = 'error', error_message = ?, updated_at = ? WHERE id = ?",
+            (message, int(time.time()), task_id),
         )
         conn.commit()
 

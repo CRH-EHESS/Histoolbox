@@ -22,6 +22,7 @@ export interface UploadResponse {
 export interface StatusResponse {
   task_id: string;
   status: "pending" | "processing" | "completed" | "error";
+  error_message: string | null;
 }
 
 export interface ResultResponse {

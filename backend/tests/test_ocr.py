@@ -112,3 +112,46 @@ async def test_result_completed(client: AsyncClient, tmp_path):
     assert body["markdown"] == "# Transcription"
     assert body["html"] == "<h1>Transcription</h1>"
     assert body["metadata"] == {"pages": 5}
+
+
+@pytest.mark.asyncio
+async def test_process_task_error_stores_message(client: AsyncClient):
+    """Quand run_chandra lève une exception, le statut devient error et error_message est persisté."""
+    from app.routers.ocr import _process_task
+    from app.database import create_task, get_task
+
+    pdf_bytes = b"%PDF-1.4 fake pdf content"
+    files = {"file": ("test.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
+
+    with patch("app.routers.ocr._process_task", new_callable=AsyncMock):
+        upload_r = await client.post("/ocr/upload", files=files)
+
+    task_id = upload_r.json()["task_id"]
+
+    # Rejoue _process_task manuellement avec run_chandra qui échoue
+    with patch(
+        "app.routers.ocr.run_chandra",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("vLLM non joignable"),
+    ):
+        await _process_task(task_id, "/fake/doc.pdf", "/fake/out")
+
+    row = get_task(task_id)
+    assert row["status"] == "error"
+    assert "vLLM non joignable" in row["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_status_exposes_error_message(client: AsyncClient):
+    """GET /ocr/status retourne error_message quand la tâche est en erreur."""
+    from app.database import create_task, update_task_error
+
+    task_id = "cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa"
+    create_task(task_id, "/fake/doc.pdf", "/fake/out")
+    update_task_error(task_id, "vLLM non joignable")
+
+    r = await client.get(f"/ocr/status/{task_id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "error"
+    assert body["error_message"] == "vLLM non joignable"

@@ -11,7 +11,8 @@ API FastAPI pour l'OCR diplomatique des documents anciens via le moteur **Chandr
 | Serveur ASGI     | Uvicorn                      |
 | Gestionnaire pkg | **uv** (pas pip)             |
 | Persistance      | SQLite stdlib (`sqlite3`)    |
-| OCR              | Chandra CLI (local, vLLM)    |
+| OCR              | Chandra API Python (vLLM)    |
+| Logging          | loguru (niveau via `LOG_LEVEL`) |
 | Tests            | pytest + httpx + pytest-asyncio |
 
 ## Démarrage rapide
@@ -22,10 +23,15 @@ uv sync
 
 # Lancer le serveur de développement
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+
+# Mode verbose (logs Chandra visibles en temps réel dans le terminal)
+LOG_LEVEL=DEBUG uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 Le serveur est accessible sur `http://localhost:8001`.  
 La documentation interactive est disponible sur `http://localhost:8001/docs`.
+
+> **Logging** : le niveau de log est contrôlé par la variable d'environnement `LOG_LEVEL` (valeurs : `DEBUG`, `INFO`, `WARNING` — défaut : `INFO`). En mode `DEBUG`, chaque étape de l'inférence est tracée : chargement du PDF, nombre de pages, durée du pre-flight vLLM, durée de l'inférence par page.
 
 ## Endpoints API
 
@@ -95,7 +101,7 @@ backend/
 │   ├── conftest.py                # Fixtures pytest (client, clean_db)
 │   ├── test_ocr.py                # 7 tests d'intégration des endpoints
 │   ├── test_database.py           # 5 tests CRUD SQLite
-│   └── test_chandra_service.py    # 5 tests du service Chandra (subprocess mocké)
+    └── test_chandra_service.py    # 8 tests du service Chandra (InferenceManager mocké)
 ├── data/                          # Créé automatiquement au démarrage
 │   ├── uploads/                   # PDFs reçus (uploads/<task_id>/fichier.pdf)
 │   └── outputs/                   # Fichiers Chandra (outputs/<task_id>/<stem>.md/.html/_metadata.json)
@@ -127,15 +133,28 @@ Au démarrage (`lifespan`), les tâches bloquées en état `processing` sont aut
 
 ## Intégration Chandra
 
-Chandra est appelé en CLI avec la méthode vLLM :
+Chandra est appelé via son **API Python** (`chandra-ocr`) — sans subprocess.
 
-```bash
-chandra <pdf_path> <output_dir> --method vllm
+```python
+from chandra.input import load_file
+from chandra.model import InferenceManager
+from chandra.model.schema import BatchInputItem
+
+manager = InferenceManager(method="vllm")  # initialisé une fois au démarrage
+images = load_file(pdf_path, {})           # PDF → List[PIL.Image]
+batch = [BatchInputItem(image=img, prompt_type="ocr_layout") for img in images]
+results = manager.generate(batch, vllm_api_base="http://localhost:8000/v1")
 ```
 
-Le service `chandra_service.py` exécute cette commande via `asyncio.to_thread(subprocess.run, ...)` pour ne pas bloquer la boucle d'événements.
+L'`InferenceManager` en mode `vllm` ne charge aucun modèle local (`self.model = None`) — il se contente d'appeler le serveur vLLM via HTTP. **L'instanciation est quasi-gratuite et n'est faite qu'une fois**, à l'import du module, ce qui élimine le cold-start de ~30-60s qu'imposait le subprocess CLI.
 
-Chandra crée un **sous-répertoire** `output_dir/<stem>/` pour chaque fichier traité. Les fichiers de sortie sont donc :
+Le flow complet dans `chandra_service.py` :
+1. Pre-flight vLLM (`_check_vllm_available` sur `/health` ou `/v1/models`)
+2. `load_file` — rasterisation du PDF en images PIL
+3. `InferenceManager.generate` — inférence via HTTP sur le vLLM
+4. `_assemble_and_persist` — concaténation des pages + écriture sur disque
+
+Les fichiers de sortie restent dans la même convention :
 
 ```
 data/outputs/<task_id>/<stem>/<stem>.md
@@ -143,7 +162,15 @@ data/outputs/<task_id>/<stem>/<stem>.html
 data/outputs/<task_id>/<stem>/<stem>_metadata.json
 ```
 
-Les fichiers sont ensuite lus et retournés par l'endpoint `/ocr/result`.
+### Variables d'environnement
+
+| Variable | Défaut | Usage |
+|---|---|---|
+| `VLLM_BASE_URL` | `http://localhost:8000` | URL du serveur vLLM (pre-flight + `/v1` pour l'inférence) |
+| `CHANDRA_RETRY_ATTEMPTS` | `3` | Nombre de tentatives tenacity |
+| `HISTOOLBOX_DB_PATH` | `./tasks.db` | Chemin SQLite |
+
+> **Prérequis :** `chandra_vllm` doit être lancé en local (port 8000) pour que le traitement OCR fonctionne. Les tests ne nécessitent pas de vLLM — `InferenceManager.generate` est mocké.
 
 ## Tests
 
@@ -155,12 +182,12 @@ uv run pytest -v
 uv run pytest --cov=app --cov-report=term-missing
 ```
 
-**Résultat attendu : 17/17 tests passent.**
+**Résultat attendu : 23/23 tests passent.**
 
 ```
 tests/test_database.py             5 tests  — CRUD SQLite (create/update/get)
-tests/test_ocr.py                  7 tests  — endpoints upload/status/result
-tests/test_chandra_service.py      5 tests  — service Chandra (subprocess mocké)
+tests/test_ocr.py                 10 tests  — endpoints upload/status/result + error_message
+tests/test_chandra_service.py      8 tests  — service Chandra (InferenceManager mocké)
 ```
 
 Les tests utilisent une base SQLite temporaire (via `HISTOOLBOX_DB_PATH`) pour l'isolation complète.

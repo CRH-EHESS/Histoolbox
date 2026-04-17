@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, Optional
 
 
 TaskStatus = Literal["pending", "processing", "completed", "error"]
@@ -12,6 +12,7 @@ class UploadResponse(BaseModel):
 class StatusResponse(BaseModel):
     task_id: str
     status: TaskStatus
+    error_message: Optional[str] = None
 
 
 class ChandraMetadata(BaseModel):
