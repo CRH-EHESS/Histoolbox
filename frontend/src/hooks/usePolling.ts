@@ -46,6 +46,8 @@ export function usePolling(taskId: string | null): PollingState {
         await updateProject(taskId, {
           markdownContent: result.markdown,
           status: "completed",
+          blocks: result.blocks,
+          pages: result.pages,
         });
         navigate(`/ocr/toolbox/${taskId}`);
       } else if (status === "error") {

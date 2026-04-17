@@ -1,43 +1,77 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { SplitView } from "../components/SplitView";
-import { PDFPanel } from "../components/PDFPanel";
+import { PDFPanel, type PDFPanelHandle } from "../components/PDFPanel";
 import { MarkdownEditor } from "../components/MarkdownEditor";
 import { useAutoSave } from "../hooks/useAutoSave";
-import { getProjectById } from "../db";
+import { getProjectById, updateProject } from "../db";
 import type { OCRProject } from "../db";
 import { exportMarkdown, exportDocx } from "../lib/exportUtils";
+import { api } from "../lib/apiClient";
+import type { BlockItem } from "../lib/apiClient";
 
 /**
  * Toolbox principale : PDF à gauche, éditeur Markdown à droite.
  * - Auto-save vers IndexedDB (debounce 1s).
  * - Export .md et .docx.
- * - Sync-scroll par ratio de progression.
+ * - Visualisation des blocs de layout (hover PDF ↔ highlight Markdown, clic bidirectionnel).
  */
 export function OCRToolboxPage() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
   const [project, setProject] = useState<OCRProject | null>(null);
   const [content, setContent] = useState("");
+  const [blocks, setBlocks] = useState<BlockItem[]>([]);
+  const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
+  const pdfPanelRef = useRef<PDFPanelHandle>(null);
 
   useAutoSave(taskId ?? null, content);
 
   // Chargement initial depuis IndexedDB
   useEffect(() => {
     if (!taskId) return;
-    getProjectById(taskId).then((p) => {
+    getProjectById(taskId).then(async (p) => {
       if (!p) { navigate("/"); return; }
       setProject(p);
       setContent(p.markdownContent);
+
+      if (p.blocks && p.blocks.length > 0) {
+        // Blocs déjà en cache IndexedDB
+        setBlocks(p.blocks);
+      } else {
+        // Fallback : récupère les blocs depuis l'API (projets avant v2 IndexedDB)
+        try {
+          const result = await api.getResult(taskId);
+          if (result.blocks?.length > 0) {
+            setBlocks(result.blocks);
+            await updateProject(taskId, { blocks: result.blocks, pages: result.pages });
+          }
+        } catch {
+          // Blocs non disponibles — fonctionnement dégradé sans overlay
+        }
+      }
     });
   }, [taskId, navigate]);
 
-  const handleScrollRatio = useCallback(
-    (_ratio: number) => {
-      // TODO Phase 7 complète : synchroniser le scroll de l'éditeur
-    },
-    []
-  );
+  // ── Handlers inter-panneaux ───────────────────────────────────────────────
+
+  const handleBlockHover = useCallback((id: string | null) => {
+    setHoveredBlockId(id);
+  }, []);
+
+  /** Clic depuis le PDF → scroll de l'éditeur Markdown (via le highlight CM). */
+  const handleBlockClickFromPDF = useCallback((id: string) => {
+    setHoveredBlockId(id);
+  }, []);
+
+  /** Clic depuis le Markdown → le PDF saute à la page du bloc. */
+  const handleBlockClickFromMarkdown = useCallback((id: string) => {
+    setHoveredBlockId(id);
+    const block = blocks.find((b) => b.id === id);
+    if (block !== undefined) {
+      pdfPanelRef.current?.jumpToPage(block.page);
+    }
+  }, [blocks]);
 
   if (!project) {
     return (
@@ -73,12 +107,23 @@ export function OCRToolboxPage() {
         <SplitView
           left={
             <PDFPanel
+              ref={pdfPanelRef}
               pdfBlob={project.pdfBlob}
-              onScrollRatioChange={handleScrollRatio}
+              blocks={blocks}
+              hoveredBlockId={hoveredBlockId}
+              onBlockHover={handleBlockHover}
+              onBlockClick={handleBlockClickFromPDF}
             />
           }
           right={
-            <MarkdownEditor value={content} onChange={setContent} />
+            <MarkdownEditor
+              value={content}
+              onChange={setContent}
+              blocks={blocks}
+              hoveredBlockId={hoveredBlockId}
+              onBlockHover={handleBlockHover}
+              onBlockClick={handleBlockClickFromMarkdown}
+            />
           }
         />
       </div>

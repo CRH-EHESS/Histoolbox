@@ -1,8 +1,11 @@
-import { useRef, useCallback, useEffect, useState } from "react";
+import { useRef, useCallback, useEffect, useState, forwardRef, useImperativeHandle } from "react";
 import { Worker, Viewer } from "@react-pdf-viewer/core";
+import type { RenderPageProps } from "@react-pdf-viewer/core";
 import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
 import "@react-pdf-viewer/core/lib/styles/index.css";
 import "@react-pdf-viewer/default-layout/lib/styles/index.css";
+import { BlockOverlay } from "./BlockOverlay";
+import type { BlockItem } from "../lib/apiClient";
 
 // Worker résolu localement par Vite — évite le chargement cross-origin depuis unpkg
 // qui bloquerait l'accès aux blob URLs sous Firefox.
@@ -11,21 +14,38 @@ const WORKER_URL = new URL(
   import.meta.url
 ).href;
 
+export interface PDFPanelHandle {
+  jumpToPage: (pageIndex: number) => void;
+}
+
 interface PDFPanelProps {
   pdfBlob: Blob;
   onScrollRatioChange?: (ratio: number) => void;
   scrollRatio?: number;
+  blocks?: BlockItem[];
+  hoveredBlockId?: string | null;
+  onBlockHover?: (id: string | null) => void;
+  onBlockClick?: (id: string) => void;
 }
 
 /**
  * Visualiseur PDF haute résolution basé sur @react-pdf-viewer.
- * - Le blob est converti en Uint8Array pour éviter les restrictions
- *   de sécurité sur les blob URLs dans les workers cross-origin.
- * - Le worker est référencé localement (pdfjs-dist dans node_modules).
+ * - Expose jumpToPage via forwardRef pour la navigation inter-panneaux.
+ * - Affiche BlockOverlay sur chaque page quand la souris survole le panneau.
  */
-export function PDFPanel({ pdfBlob, onScrollRatioChange }: PDFPanelProps) {
+export const PDFPanel = forwardRef<PDFPanelHandle, PDFPanelProps>(function PDFPanel(
+  { pdfBlob, onScrollRatioChange, blocks = [], hoveredBlockId = null, onBlockHover, onBlockClick },
+  ref
+) {
   const defaultLayout = defaultLayoutPlugin();
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isPanelHovered, setIsPanelHovered] = useState(false);
+
+  useImperativeHandle(ref, () => ({
+    jumpToPage(pageIndex: number) {
+      defaultLayout.toolbarPluginInstance.pageNavigationPluginInstance.jumpToPage(pageIndex);
+    },
+  }));
 
   // Convertir le blob en Uint8Array — pas de blob URL, pas de restriction worker
   const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
@@ -44,6 +64,29 @@ export function PDFPanel({ pdfBlob, onScrollRatioChange }: PDFPanelProps) {
     if (max > 0) onScrollRatioChange?.(el.scrollTop / max);
   }, [onScrollRatioChange]);
 
+  /** renderPage : injecte BlockOverlay (invisible hors survol du panneau). */
+  const renderPage = useCallback(
+    (props: RenderPageProps) => (
+      <>
+        {props.canvasLayer.children}
+        {props.textLayer.children}
+        {props.annotationLayer.children}
+        {isPanelHovered && blocks.length > 0 && (
+          <BlockOverlay
+            pageIndex={props.pageIndex}
+            width={props.width}
+            height={props.height}
+            blocks={blocks}
+            hoveredBlockId={hoveredBlockId}
+            onBlockHover={onBlockHover ?? (() => {})}
+            onBlockClick={onBlockClick ?? (() => {})}
+          />
+        )}
+      </>
+    ),
+    [isPanelHovered, blocks, hoveredBlockId, onBlockHover, onBlockClick]
+  );
+
   if (!pdfData) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -57,10 +100,16 @@ export function PDFPanel({ pdfBlob, onScrollRatioChange }: PDFPanelProps) {
       ref={containerRef}
       className="h-full overflow-auto"
       onScroll={handleScroll}
+      onMouseEnter={() => setIsPanelHovered(true)}
+      onMouseLeave={() => setIsPanelHovered(false)}
     >
       <Worker workerUrl={WORKER_URL}>
-        <Viewer fileUrl={pdfData} plugins={[defaultLayout]} />
+        <Viewer
+          fileUrl={pdfData}
+          plugins={[defaultLayout]}
+          renderPage={renderPage}
+        />
       </Worker>
     </div>
   );
-}
+});

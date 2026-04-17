@@ -6,6 +6,7 @@
  */
 
 import Dexie, { type EntityTable } from "dexie";
+import type { BlockItem, PageInfo } from "../lib/apiClient";
 
 export type TaskStatus = "pending" | "processing" | "completed" | "error";
 
@@ -21,6 +22,10 @@ export interface OCRProject {
   status: TaskStatus;
   createdAt: number;
   updatedAt: number;
+  /** Blocs de layout extraits par Chandra (bbox normalisées, label, markdown) */
+  blocks?: BlockItem[];
+  /** Informations par page (dimensions, token count) */
+  pages?: PageInfo[];
 }
 
 class HistoolboxDB extends Dexie {
@@ -30,6 +35,10 @@ class HistoolboxDB extends Dexie {
     super("HistoolboxDB");
     this.version(1).stores({
       // Index : id (PK), status (pour le recovery au démarrage)
+      ocr_projects: "id, status, createdAt",
+    });
+    // v2 : ajout des champs blocks/pages (optionnels, aucune migration nécessaire)
+    this.version(2).stores({
       ocr_projects: "id, status, createdAt",
     });
   }

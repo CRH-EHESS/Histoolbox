@@ -31,7 +31,7 @@ describe("exportMarkdown", () => {
     exportMarkdown("# Hello\nMonde", "document.pdf");
     expect(lastAnchor.download).toBe("document.md");
     expect(createObjectURL).toHaveBeenCalledOnce();
-    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    const blob = (createObjectURL.mock.calls[0] as unknown[])[0] as Blob;
     expect(blob.type).toContain("text/markdown");
   });
 });
@@ -41,7 +41,7 @@ describe("exportDocx", () => {
     await exportDocx("# Titre\nCorps du texte", "rapport.pdf");
     expect(lastAnchor.download).toBe("rapport.docx");
     expect(createObjectURL).toHaveBeenCalledOnce();
-    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    const blob = (createObjectURL.mock.calls[0] as unknown[])[0] as Blob;
     // docx produit un zip (application/vnd.openxmlformats...)
     expect(blob).toBeInstanceOf(Blob);
   });

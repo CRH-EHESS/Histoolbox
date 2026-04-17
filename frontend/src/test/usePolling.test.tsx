@@ -34,7 +34,10 @@ afterEach(() => {
 
 describe("usePolling", () => {
   it("appelle getStatus immédiatement au montage", async () => {
-    vi.mocked(api.getStatus).mockResolvedValue({ task_id: "task-42", status: "processing" });
+    vi.mocked(api.getStatus).mockResolvedValue({
+      task_id: "task-42", status: "processing",
+      error_message: null, created_at: 0, updated_at: 0,
+    });
 
     renderHook(() => usePolling("task-42"), { wrapper });
     // Flush les microtasks (le premier poll() est appelé sans timer)
@@ -45,7 +48,10 @@ describe("usePolling", () => {
   });
 
   it("rappelle getStatus après l'intervalle de 5s", async () => {
-    vi.mocked(api.getStatus).mockResolvedValue({ task_id: "task-42", status: "processing" });
+    vi.mocked(api.getStatus).mockResolvedValue({
+      task_id: "task-42", status: "processing",
+      error_message: null, created_at: 0, updated_at: 0,
+    });
 
     renderHook(() => usePolling("task-42"), { wrapper });
     await act(async () => { await Promise.resolve(); });
@@ -59,12 +65,20 @@ describe("usePolling", () => {
   });
 
   it("appelle updateProject avec status=completed et le markdown", async () => {
-    vi.mocked(api.getStatus).mockResolvedValue({ task_id: "task-42", status: "completed" });
+    vi.mocked(api.getStatus).mockResolvedValue({
+      task_id: "task-42", status: "completed",
+      error_message: null, created_at: 0, updated_at: 1,
+    });
     vi.mocked(api.getResult).mockResolvedValue({
       task_id: "task-42",
+      filename: "doc.pdf",
+      created_at: 0,
+      completed_at: 1,
       markdown: "# Résultat",
-      html: "<h1>Résultat</h1>",
-      metadata: {},
+      blocks: [],
+      num_pages: 1,
+      total_token_count: 10,
+      pages: [],
     });
 
     renderHook(() => usePolling("task-42"), { wrapper });
@@ -76,11 +90,16 @@ describe("usePolling", () => {
     expect(updateProject).toHaveBeenCalledWith("task-42", {
       markdownContent: "# Résultat",
       status: "completed",
+      blocks: [],
+      pages: [],
     });
   });
 
   it("appelle updateProject avec status=error en cas d'erreur", async () => {
-    vi.mocked(api.getStatus).mockResolvedValue({ task_id: "task-42", status: "error" });
+    vi.mocked(api.getStatus).mockResolvedValue({
+      task_id: "task-42", status: "error",
+      error_message: "vLLM error", created_at: 0, updated_at: 1,
+    });
 
     renderHook(() => usePolling("task-42"), { wrapper });
     await act(async () => { await Promise.resolve(); });
