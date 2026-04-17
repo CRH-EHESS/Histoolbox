@@ -17,14 +17,14 @@ from app.services.chandra_service import (
 )
 
 
-def _make_page(markdown="# OCR", html="<h1>OCR</h1>", token_count=42, error=None):
+def _make_page(markdown="# OCR", html="<h1>OCR</h1>", token_count=42, error=None, chunks=None):
     """Crée un faux BatchOutputItem pour les tests."""
     item = MagicMock()
     item.markdown = markdown
     item.html = html
     item.token_count = token_count
-    item.page_box = [0, 0, 100, 100]
-    item.chunks = []
+    item.page_box = [0, 0, 1000, 1000]
+    item.chunks = chunks if chunks is not None else []
     item.error = error
     return item
 
@@ -53,9 +53,10 @@ async def test_run_chandra_success(tmp_path):
         result = await run_chandra(str(pdf_path), str(output_dir))
 
     assert result["markdown"] == "# Page 1\n\n# Page 2"
-    assert result["html"] == "<h1>Page 1</h1>\n\n<h1>Page 2</h1>"
-    assert result["metadata"]["num_pages"] == 2
-    assert result["metadata"]["total_token_count"] == 30
+    assert result["num_pages"] == 2
+    assert result["total_token_count"] == 30
+    assert len(result["blocks"]) == 2  # 1 bloc synthétique par page (chunks=[])
+    assert result["blocks"][0]["bbox_norm"] == [0.0, 0.0, 1.0, 1.0]
 
 
 @pytest.mark.asyncio
@@ -124,16 +125,19 @@ def test_check_vllm_unavailable_raises():
 # ---------------------------------------------------------------------------
 
 def test_assemble_and_persist_writes_files(tmp_path):
-    """_assemble_and_persist crée les fichiers .md, .html et _metadata.json."""
+    """_assemble_and_persist crée les fichiers .md, _blocks.json et _metadata.json."""
     results = [_make_page("# OCR", "<h1>OCR</h1>", 42)]
     output = _assemble_and_persist("rapport", results, tmp_path / "rapport")
 
     chandra_dir = tmp_path / "rapport"
     assert (chandra_dir / "rapport.md").read_text() == "# OCR"
-    assert (chandra_dir / "rapport.html").read_text() == "<h1>OCR</h1>"
+    assert (chandra_dir / "rapport_blocks.json").exists()
+    assert (chandra_dir / "rapport_metadata.json").exists()
     assert output["markdown"] == "# OCR"
-    assert output["metadata"]["num_pages"] == 1
-    assert output["metadata"]["total_token_count"] == 42
+    assert output["num_pages"] == 1
+    assert output["total_token_count"] == 42
+    assert len(output["blocks"]) == 1
+    assert output["blocks"][0]["bbox_norm"] == [0.0, 0.0, 1.0, 1.0]
 
 
 def test_assemble_and_persist_multipage(tmp_path):
@@ -145,7 +149,25 @@ def test_assemble_and_persist_multipage(tmp_path):
     output = _assemble_and_persist("doc", results, tmp_path / "doc")
 
     assert output["markdown"] == "Page A\n\nPage B"
-    assert output["html"] == "<p>A</p>\n\n<p>B</p>"
-    assert output["metadata"]["total_token_count"] == 25
-    assert len(output["metadata"]["pages"]) == 2
+    assert output["total_token_count"] == 25
+    assert len(output["pages"]) == 2
+    assert output["num_pages"] == 2
+    assert len(output["blocks"]) == 2
+
+
+def test_assemble_and_persist_with_chunks(tmp_path):
+    """_assemble_and_persist normalise correctement les bbox quand des chunks sont présents."""
+    chunks = [{"bbox": [100, 50, 500, 200], "label": "Text", "content": "<p>Hello</p>"}]
+    results = [_make_page("# Unused", "", 30, chunks=chunks)]
+    output = _assemble_and_persist("doc", results, tmp_path / "doc")
+
+    assert len(output["blocks"]) == 1
+    block = output["blocks"][0]
+    assert block["id"] == "0_0"
+    assert block["page"] == 0
+    assert block["block_index"] == 0
+    assert block["label"] == "Text"
+    # page_box = [0, 0, 1000, 1000] d'après _make_page
+    assert block["bbox_norm"] == [0.1, 0.05, 0.5, 0.2]
+    assert isinstance(block["markdown"], str)
 

@@ -53,7 +53,10 @@ async def test_status_pending_after_upload(client: AsyncClient):
     task_id = upload_r.json()["task_id"]
     status_r = await client.get(f"/ocr/status/{task_id}")
     assert status_r.status_code == 200
-    assert status_r.json()["status"] == "pending"
+    body = status_r.json()
+    assert body["status"] == "pending"
+    assert isinstance(body["created_at"], int)
+    assert isinstance(body["updated_at"], int)
 
 
 @pytest.mark.asyncio
@@ -86,19 +89,31 @@ async def test_result_unknown_task(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_result_completed(client: AsyncClient, tmp_path):
-    """GET /ocr/result retourne les fichiers Chandra si status=completed."""
+    """GET /ocr/result retourne le contrat typé complet si status=completed."""
+    import json
     from app.database import create_task, update_task_status
 
-    # Simule une tâche terminée avec de vrais fichiers de sortie
-    # Chandra crée output_dir/<stem>/ comme répertoire de sortie effectif
     task_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     output_dir = tmp_path / task_id
     output_dir.mkdir()
     chandra_subdir = output_dir / "doc"
     chandra_subdir.mkdir()
+
     (chandra_subdir / "doc.md").write_text("# Transcription")
-    (chandra_subdir / "doc.html").write_text("<h1>Transcription</h1>")
-    (chandra_subdir / "doc_metadata.json").write_text('{"pages": 5}')
+    blocks_data = [
+        {
+            "id": "0_0", "page": 0, "block_index": 0,
+            "label": "Text", "bbox_norm": [0.0, 0.0, 1.0, 1.0],
+            "markdown": "# Transcription",
+        }
+    ]
+    (chandra_subdir / "doc_blocks.json").write_text(json.dumps(blocks_data))
+    meta_data = {
+        "num_pages": 1,
+        "total_token_count": 120,
+        "pages": [{"page_num": 0, "page_box": [0, 0, 1024, 1408], "token_count": 120, "num_blocks": 1}],
+    }
+    (chandra_subdir / "doc_metadata.json").write_text(json.dumps(meta_data))
 
     pdf_path = tmp_path / "doc.pdf"
     pdf_path.write_bytes(b"fake")
@@ -109,9 +124,17 @@ async def test_result_completed(client: AsyncClient, tmp_path):
     r = await client.get(f"/ocr/result/{task_id}")
     assert r.status_code == 200
     body = r.json()
+    assert body["task_id"] == task_id
+    assert body["filename"] == "doc.pdf"
     assert body["markdown"] == "# Transcription"
-    assert body["html"] == "<h1>Transcription</h1>"
-    assert body["metadata"] == {"pages": 5}
+    assert isinstance(body["created_at"], int)
+    assert isinstance(body["completed_at"], int)
+    assert len(body["blocks"]) == 1
+    assert body["blocks"][0]["label"] == "Text"
+    assert body["blocks"][0]["bbox_norm"] == [0.0, 0.0, 1.0, 1.0]
+    assert body["num_pages"] == 1
+    assert body["total_token_count"] == 120
+    assert len(body["pages"]) == 1
 
 
 @pytest.mark.asyncio
@@ -155,3 +178,5 @@ async def test_status_exposes_error_message(client: AsyncClient):
     body = r.json()
     assert body["status"] == "error"
     assert body["error_message"] == "vLLM non joignable"
+    assert isinstance(body["created_at"], int)
+    assert isinstance(body["updated_at"], int)

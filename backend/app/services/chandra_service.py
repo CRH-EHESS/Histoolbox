@@ -31,6 +31,7 @@ from tenacity import (
 from chandra.input import load_file
 from chandra.model import InferenceManager
 from chandra.model.schema import BatchInputItem, BatchOutputItem
+from chandra.output import parse_markdown as _chandra_parse_md
 
 # URL de base du service vLLM — configurable via variable d'environnement.
 # Utilisé tel quel pour le pre-flight (/health, /v1/models).
@@ -149,7 +150,7 @@ async def run_chandra(pdf_path: str, output_dir: str) -> dict:
     - Lève RuntimeError si le vLLM retourne des erreurs sur certaines pages.
     - Persiste les fichiers de sortie sur disque (compatibilité avec /ocr/result).
 
-    Retourne un dict {markdown, html, metadata}.
+    Retourne un dict {markdown, blocks, num_pages, total_token_count, pages}.
     """
     logger.info("Chandra | démarrage | pdf={}", pdf_path)
     logger.debug(
@@ -181,42 +182,87 @@ def _assemble_and_persist(
     stem: str, results: List[BatchOutputItem], chandra_dir: Path
 ) -> dict:
     """
-    Assemble les résultats par page, les persiste sur disque et retourne le dict.
+    Assemble les résultats par page, extrait les blocs de layout avec bbox normalisées,
+    persiste sur disque et retourne le dict.
 
     Fichiers créés :
       chandra_dir/<stem>.md
-      chandra_dir/<stem>.html
+      chandra_dir/<stem>_blocks.json
       chandra_dir/<stem>_metadata.json
     """
     chandra_dir.mkdir(parents=True, exist_ok=True)
 
-    markdown = "\n\n".join(r.markdown for r in results)
-    html = "\n\n".join(r.html for r in results)
+    blocks: list = []
+    for page_idx, result in enumerate(results):
+        page_w = result.page_box[2] or 1
+        page_h = result.page_box[3] or 1
+
+        if result.chunks:
+            for block_idx, chunk in enumerate(result.chunks):
+                bbox = chunk["bbox"]
+                bbox_norm = [
+                    round(bbox[0] / page_w, 4),
+                    round(bbox[1] / page_h, 4),
+                    round(bbox[2] / page_w, 4),
+                    round(bbox[3] / page_h, 4),
+                ]
+                # parse_markdown attend du HTML avec des <div> de premier niveau ;
+                # on enveloppe le contenu intérieur du chunk pour respecter ce contrat.
+                block_md = _chandra_parse_md(f"<div>{chunk['content']}</div>").strip()
+                blocks.append({
+                    "id": f"{page_idx}_{block_idx}",
+                    "page": page_idx,
+                    "block_index": block_idx,
+                    "label": chunk.get("label", "Text"),
+                    "bbox_norm": bbox_norm,
+                    "markdown": block_md,
+                })
+        else:
+            # Fallback : pas de chunks détectés, bloc synthétique couvrant toute la page
+            blocks.append({
+                "id": f"{page_idx}_0",
+                "page": page_idx,
+                "block_index": 0,
+                "label": "Text",
+                "bbox_norm": [0.0, 0.0, 1.0, 1.0],
+                "markdown": result.markdown,
+            })
+
+    markdown = "\n\n".join(b["markdown"] for b in blocks if b["markdown"].strip())
+    pages = [
+        {
+            "page_num": i,
+            "page_box": r.page_box,
+            "token_count": r.token_count,
+            "num_blocks": sum(1 for b in blocks if b["page"] == i),
+        }
+        for i, r in enumerate(results)
+    ]
     metadata = {
         "num_pages": len(results),
         "total_token_count": sum(r.token_count for r in results),
-        "pages": [
-            {
-                "page_num": i,
-                "page_box": r.page_box,
-                "token_count": r.token_count,
-                "num_chunks": len(r.chunks) if r.chunks else 0,
-            }
-            for i, r in enumerate(results)
-        ],
+        "pages": pages,
     }
 
     (chandra_dir / f"{stem}.md").write_text(markdown, encoding="utf-8")
-    (chandra_dir / f"{stem}.html").write_text(html, encoding="utf-8")
+    (chandra_dir / f"{stem}_blocks.json").write_text(
+        json.dumps(blocks, indent=2), encoding="utf-8"
+    )
     (chandra_dir / f"{stem}_metadata.json").write_text(
         json.dumps(metadata, indent=2), encoding="utf-8"
     )
 
     logger.debug(
-        "Chandra | fichiers écrits dans {} | markdown={}c | html={}c | pages={}",
+        "Chandra | fichiers écrits dans {} | markdown={}c | {} bloc(s) | {} page(s)",
         chandra_dir,
         len(markdown),
-        len(html),
+        len(blocks),
         len(results),
     )
-    return {"markdown": markdown, "html": html, "metadata": metadata}
+    return {
+        "markdown": markdown,
+        "blocks": blocks,
+        "num_pages": len(results),
+        "total_token_count": metadata["total_token_count"],
+        "pages": pages,
+    }

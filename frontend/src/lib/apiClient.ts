@@ -23,13 +23,36 @@ export interface StatusResponse {
   task_id: string;
   status: "pending" | "processing" | "completed" | "error";
   error_message: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface BlockItem {
+  id: string;           // "{page}_{block_index}"
+  page: number;         // 0-indexed
+  block_index: number;
+  label: string;        // "Text" | "Table" | "Image" | "Figure" | "Page-Header" | …
+  bbox_norm: number[];  // [x1, y1, x2, y2] normalisé dans [0, 1]
+  markdown: string;
+}
+
+export interface PageInfo {
+  page_num: number;
+  page_box: number[];   // [0, 0, width_px, height_px]
+  token_count: number;
+  num_blocks: number;
 }
 
 export interface ResultResponse {
   task_id: string;
+  filename: string;
+  created_at: number;
+  completed_at: number;
   markdown: string;
-  html: string;
-  metadata: Record<string, unknown>;
+  blocks: BlockItem[];
+  num_pages: number;
+  total_token_count: number;
+  pages: PageInfo[];
 }
 
 export const api = {

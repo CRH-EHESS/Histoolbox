@@ -14,7 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
 from loguru import logger
 
 from app.database import create_task, get_task, update_task_status, update_task_error
-from app.models.schemas import ResultResponse, StatusResponse, UploadResponse
+from app.models.schemas import BlockItem, PageInfo, ResultResponse, StatusResponse, UploadResponse
 from app.services.chandra_service import run_chandra
 
 router = APIRouter(prefix="/ocr", tags=["OCR"])
@@ -84,6 +84,8 @@ async def get_status(task_id: str) -> StatusResponse:
         task_id=task_id,
         status=row["status"],
         error_message=row["error_message"],
+        created_at=int(row["created_at"]),
+        updated_at=int(row["updated_at"]),
     )
 
 
@@ -96,17 +98,35 @@ async def get_result(task_id: str) -> ResultResponse:
         raise HTTPException(status_code=409, detail=f"Tâche non terminée (statut : {row['status']}).")
 
     # Chandra crée un sous-répertoire output_dir/<stem>/ pour chaque fichier traité
-    output_dir = Path(row["output_dir"]) / Path(row["pdf_path"]).stem
     pdf_stem = Path(row["pdf_path"]).stem
+    filename = Path(row["pdf_path"]).name
+    chandra_dir = Path(row["output_dir"]) / pdf_stem
 
-    md_file = output_dir / f"{pdf_stem}.md"
-    html_file = output_dir / f"{pdf_stem}.html"
-    meta_file = output_dir / f"{pdf_stem}_metadata.json"
+    md_file = chandra_dir / f"{pdf_stem}.md"
+    blocks_file = chandra_dir / f"{pdf_stem}_blocks.json"
+    meta_file = chandra_dir / f"{pdf_stem}_metadata.json"
 
     markdown = md_file.read_text(encoding="utf-8") if md_file.exists() else ""
-    html = html_file.read_text(encoding="utf-8") if html_file.exists() else ""
-    metadata: dict = {}
-    if meta_file.exists():
-        metadata = json.loads(meta_file.read_text(encoding="utf-8"))
 
-    return ResultResponse(task_id=task_id, markdown=markdown, html=html, metadata=metadata)
+    blocks_raw: list = []
+    if blocks_file.exists():
+        blocks_raw = json.loads(blocks_file.read_text(encoding="utf-8"))
+
+    meta: dict = {}
+    if meta_file.exists():
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+
+    blocks = [BlockItem(**b) for b in blocks_raw]
+    pages = [PageInfo(**p) for p in meta.get("pages", [])]
+
+    return ResultResponse(
+        task_id=task_id,
+        filename=filename,
+        created_at=int(row["created_at"]),
+        completed_at=int(row["updated_at"]),
+        markdown=markdown,
+        blocks=blocks,
+        num_pages=meta.get("num_pages", len(pages)),
+        total_token_count=meta.get("total_token_count", 0),
+        pages=pages,
+    )
