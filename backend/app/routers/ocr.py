@@ -11,10 +11,11 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File
 from loguru import logger
 
 from app.database import create_task, get_task, touch_task, update_task_status, update_task_error
+from app.limiter import limiter
 from app.models.schemas import BlockItem, PageInfo, ResultResponse, StatusResponse, UploadResponse
 from app.services.chandra_service import run_chandra
 
@@ -48,7 +49,9 @@ async def _process_task(task_id: str, pdf_path: str, output_dir: str) -> None:
 
 
 @router.post("/upload", response_model=UploadResponse, status_code=202)
+@limiter.limit("10/minute")
 async def upload_pdf(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
 ) -> UploadResponse:
