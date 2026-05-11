@@ -6,8 +6,36 @@
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
+const TOKEN_KEY = "histoolbox_api_key";
+
+/** Lit le token stocké dans localStorage (null si absent). */
+export function getStoredToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+/** Persiste le token dans localStorage. */
+export function storeToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+/** Supprime le token stocké (logout). */
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getStoredToken();
+  return token ? { "X-API-Key": token } : {};
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, init);
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
+  });
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`[${res.status}] ${detail}`);

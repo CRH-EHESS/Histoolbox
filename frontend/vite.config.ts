@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
+  // En prod GitHub Pages : VITE_BASE_PATH=/histoolbox/
+  // En dev local          : non défini → '/'
+  base: process.env.VITE_BASE_PATH ?? '/',
   plugins: [
     react(),
     tailwindcss(),

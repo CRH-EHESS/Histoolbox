@@ -1,0 +1,6 @@
+# Remplacer par le domaine réel pointant vers ce serveur.
+# Caddy gère le HTTPS automatiquement via Let's Encrypt.
+
+api.histoolbox.example.com {
+    reverse_proxy api:8001
+}

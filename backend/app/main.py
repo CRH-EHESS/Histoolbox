@@ -9,12 +9,22 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.database import init_db, get_expired_tasks, delete_task
+from app.limiter import limiter
 from app.routers.ocr import OUTPUT_ROOT, UPLOAD_ROOT, router as ocr_router
+
+# --------------------------------------------------------------------------- #
+# Authentification par clé API (header X-API-Key)                             #
+# Si API_KEY n'est pas défini (dev local), la vérification est ignorée.       #
+# --------------------------------------------------------------------------- #
+API_KEY = os.getenv("API_KEY", "")
 
 # --------------------------------------------------------------------------- #
 # Logging — contrôlé par la variable d'environnement LOG_LEVEL (défaut: INFO) #
@@ -87,15 +97,39 @@ async def lifespan(app: FastAPI):
     cleanup_task.cancel()
 
 
+# --------------------------------------------------------------------------- #
+# Origines CORS autorisées                                                     #
+# En prod : ALLOWED_ORIGINS="https://user.github.io,https://autredomaine.fr" #
+# --------------------------------------------------------------------------- #
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+
 app = FastAPI(
     title="Histoolbox API",
     version="0.1.0",
     lifespan=lifespan,
 )
 
+# Rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    """Vérifie le header X-API-Key si API_KEY est défini en variable d'environnement."""
+    if API_KEY and request.url.path != "/health":
+        key = request.headers.get("X-API-Key", "")
+        if key != API_KEY:
+            logger.warning("Accès refusé | path={} | ip={}", request.url.path, request.client.host if request.client else "?")
+            return JSONResponse(status_code=401, content={"detail": "Clé d'accès invalide ou manquante."})
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # dev frontend Vite
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
