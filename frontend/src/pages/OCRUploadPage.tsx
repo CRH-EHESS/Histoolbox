@@ -13,9 +13,9 @@ export function OCRUploadPage() {
   async function handleFile(file: File) {
     setUploading(true);
     setError(null);
+    const tempId = `local-${Date.now()}`;
     try {
       // 1. Stocker le PDF en local avant tout appel réseau
-      const tempId = `local-${Date.now()}`;
       await createProject({
         id: tempId,
         fileName: file.name,
@@ -40,6 +40,8 @@ export function OCRUploadPage() {
 
       navigate(`/ocr/waiting/${task_id}`);
     } catch (err) {
+      // Nettoyage de l'entrée temporaire si l'upload backend a échoué
+      await db.ocr_projects.delete(tempId).catch(() => {});
       setError(err instanceof Error ? err.message : "Erreur lors de l'envoi.");
       setUploading(false);
     }

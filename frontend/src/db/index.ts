@@ -6,9 +6,9 @@
  */
 
 import Dexie, { type EntityTable } from "dexie";
-import type { BlockItem, PageInfo } from "../lib/apiClient";
+import type { BlockItem, PageInfo, TaskStatus } from "../lib/apiClient";
 
-export type TaskStatus = "pending" | "processing" | "completed" | "error";
+export type { TaskStatus };
 
 /** Représente un projet OCR complet stocké localement. */
 export interface OCRProject {

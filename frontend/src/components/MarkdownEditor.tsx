@@ -53,18 +53,40 @@ const activeBlockTheme = EditorView.baseTheme({
 
 // ─── Couleur de fond pour les blocs en mode Aperçu ───────────────────────────
 
+const BLOCK_BG: Record<string, string> = {
+  Text:             "59,130,246",
+  "Section-Header": "139,92,246",
+  "Page-Header":    "139,92,246",
+  Table:            "34,197,94",
+  Figure:           "249,115,22",
+  Image:            "249,115,22",
+};
+
 function blockBgColor(label: string, active: boolean): string {
   const alpha = active ? "0.18" : "0";
-  switch (label) {
-    case "Text":              return `rgba(59,130,246,${alpha})`;
-    case "Section-Header":
-    case "Page-Header":       return `rgba(139,92,246,${alpha})`;
-    case "Table":             return `rgba(34,197,94,${alpha})`;
-    case "Figure":
-    case "Image":             return `rgba(249,115,22,${alpha})`;
-    default:                  return `rgba(100,116,139,${alpha})`;
-  }
+  const rgb = BLOCK_BG[label] ?? "100,116,139";
+  return `rgba(${rgb},${alpha})`;
 }
+
+// ─── Styles prose pour le mode Aperçu (markdown rendu) ──────────────────────
+
+const PROSE_CLASSES = `flex-1 overflow-auto p-6 bg-[#fdfbf7] text-[#262626]
+    [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mb-4 [&_h1]:mt-6
+    [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mb-3 [&_h2]:mt-5
+    [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mb-2 [&_h3]:mt-4
+    [&_p]:mb-3 [&_p]:leading-relaxed
+    [&_strong]:font-semibold [&_em]:italic
+    [&_ul]:list-disc [&_ul]:ml-5 [&_ul]:mb-3
+    [&_ol]:list-decimal [&_ol]:ml-5 [&_ol]:mb-3
+    [&_li]:mb-1
+    [&_code]:font-mono [&_code]:bg-stone-100 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-sm
+    [&_pre]:bg-stone-100 [&_pre]:p-4 [&_pre]:rounded-lg [&_pre]:overflow-auto [&_pre]:mb-3
+    [&_blockquote]:border-l-4 [&_blockquote]:border-stone-300 [&_blockquote]:pl-4 [&_blockquote]:text-stone-600 [&_blockquote]:italic [&_blockquote]:mb-3
+    [&_hr]:border-stone-200 [&_hr]:my-6
+    [&_a]:text-blue-700 [&_a]:underline
+    [&_table]:w-full [&_table]:border-collapse [&_table]:mb-3
+    [&_th]:border [&_th]:border-stone-300 [&_th]:px-3 [&_th]:py-1.5 [&_th]:bg-stone-100 [&_th]:text-left
+    [&_td]:border [&_td]:border-stone-300 [&_td]:px-3 [&_td]:py-1.5`;
 
 // ─── Composant MarkdownEditor ─────────────────────────────────────────────────
 
@@ -117,24 +139,6 @@ export function MarkdownEditor({
     const raw = marked.parse(value) as string;
     return DOMPurify.sanitize(raw);
   }, [mode, value, hasBlocks]);
-
-  const PROSE_CLASSES = `flex-1 overflow-auto p-6 bg-[#fdfbf7] text-[#262626]
-    [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mb-4 [&_h1]:mt-6
-    [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mb-3 [&_h2]:mt-5
-    [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mb-2 [&_h3]:mt-4
-    [&_p]:mb-3 [&_p]:leading-relaxed
-    [&_strong]:font-semibold [&_em]:italic
-    [&_ul]:list-disc [&_ul]:ml-5 [&_ul]:mb-3
-    [&_ol]:list-decimal [&_ol]:ml-5 [&_ol]:mb-3
-    [&_li]:mb-1
-    [&_code]:font-mono [&_code]:bg-stone-100 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-sm
-    [&_pre]:bg-stone-100 [&_pre]:p-4 [&_pre]:rounded-lg [&_pre]:overflow-auto [&_pre]:mb-3
-    [&_blockquote]:border-l-4 [&_blockquote]:border-stone-300 [&_blockquote]:pl-4 [&_blockquote]:text-stone-600 [&_blockquote]:italic [&_blockquote]:mb-3
-    [&_hr]:border-stone-200 [&_hr]:my-6
-    [&_a]:text-blue-700 [&_a]:underline
-    [&_table]:w-full [&_table]:border-collapse [&_table]:mb-3
-    [&_th]:border [&_th]:border-stone-300 [&_th]:px-3 [&_th]:py-1.5 [&_th]:bg-stone-100 [&_th]:text-left
-    [&_td]:border [&_td]:border-stone-300 [&_td]:px-3 [&_td]:py-1.5`;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">

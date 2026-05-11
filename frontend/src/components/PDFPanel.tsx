@@ -21,7 +21,6 @@ export interface PDFPanelHandle {
 interface PDFPanelProps {
   pdfBlob: Blob;
   onScrollRatioChange?: (ratio: number) => void;
-  scrollRatio?: number;
   blocks?: BlockItem[];
   hoveredBlockId?: string | null;
   onBlockHover?: (id: string | null) => void;
@@ -37,6 +36,7 @@ export const PDFPanel = forwardRef<PDFPanelHandle, PDFPanelProps>(function PDFPa
   { pdfBlob, onScrollRatioChange, blocks = [], hoveredBlockId = null, onBlockHover, onBlockClick },
   ref
 ) {
+  // defaultLayoutPlugin appelle des hooks React en interne — doit rester au top-level du composant
   const defaultLayout = defaultLayoutPlugin();
   const containerRef = useRef<HTMLDivElement>(null);
   const [isPanelHovered, setIsPanelHovered] = useState(false);

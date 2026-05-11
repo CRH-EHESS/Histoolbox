@@ -15,13 +15,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export type TaskStatus = "pending" | "processing" | "completed" | "error";
+
 export interface UploadResponse {
   task_id: string;
 }
 
 export interface StatusResponse {
   task_id: string;
-  status: "pending" | "processing" | "completed" | "error";
+  status: TaskStatus;
   error_message: string | null;
   created_at: number;
   updated_at: number;

@@ -59,11 +59,6 @@ export function OCRToolboxPage() {
     setHoveredBlockId(id);
   }, []);
 
-  /** Clic depuis le PDF → scroll de l'éditeur Markdown (via le highlight CM). */
-  const handleBlockClickFromPDF = useCallback((id: string) => {
-    setHoveredBlockId(id);
-  }, []);
-
   /** Clic depuis le Markdown → le PDF saute à la page du bloc. */
   const handleBlockClickFromMarkdown = useCallback((id: string) => {
     setHoveredBlockId(id);
@@ -112,7 +107,7 @@ export function OCRToolboxPage() {
               blocks={blocks}
               hoveredBlockId={hoveredBlockId}
               onBlockHover={handleBlockHover}
-              onBlockClick={handleBlockClickFromPDF}
+              onBlockClick={setHoveredBlockId}
             />
           }
           right={

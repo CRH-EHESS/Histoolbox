@@ -6,6 +6,11 @@ interface AppShellProps {
 
 /** Header fixe + zone de contenu principal pleine largeur. */
 export function AppShell({ children }: AppShellProps) {
+  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-stone-100 ${
+      isActive ? "bg-stone-100 font-medium" : ""
+    }`;
+
   return (
     <div className="flex flex-col h-screen bg-[#fdfbf7] text-[#262626]">
       {/* Header — bande pleine largeur, intérieur contraint à 2xl max */}
@@ -19,26 +24,11 @@ export function AppShell({ children }: AppShellProps) {
 
           {/* Navigation */}
           <nav className="flex gap-1">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) =>
-                `flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-stone-100 ${
-                  isActive ? "bg-stone-100 font-medium" : ""
-                }`
-              }
-            >
+            <NavLink to="/" end className={navLinkClass}>
               <span>🏠</span>
               <span>Accueil</span>
             </NavLink>
-            <NavLink
-              to="/ocr/upload"
-              className={({ isActive }) =>
-                `flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-stone-100 ${
-                  isActive ? "bg-stone-100 font-medium" : ""
-                }`
-              }
-            >
+            <NavLink to="/ocr/upload" className={navLinkClass}>
               <span>🔍</span>
               <span>OCR & Transcription</span>
             </NavLink>

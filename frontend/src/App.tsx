@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { AppShell } from "./components/AppShell";
 import { HomePage } from "./pages/HomePage";
@@ -14,6 +14,7 @@ import { api } from "./lib/apiClient";
  */
 function RecoveryWatcher() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     async function recover() {
@@ -27,14 +28,14 @@ function RecoveryWatcher() {
               markdownContent: result.markdown,
               status: "completed",
             });
-            if (window.location.pathname.includes(project.id)) {
+            if (location.pathname.includes(project.id)) {
               navigate(`/ocr/toolbox/${project.id}`);
             }
           } else if (status === "error") {
             await updateProject(project.id, { status: "error" });
           } else {
             // Toujours en cours → naviguer vers la page d'attente pour relancer le poll
-            if (!window.location.pathname.includes(project.id)) {
+            if (!location.pathname.includes(project.id)) {
               navigate(`/ocr/waiting/${project.id}`);
             }
           }
@@ -44,7 +45,7 @@ function RecoveryWatcher() {
       }
     }
     recover();
-  }, [navigate]);
+  }, [navigate, location.pathname]);
 
   return null;
 }
