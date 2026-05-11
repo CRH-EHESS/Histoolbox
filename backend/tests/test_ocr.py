@@ -180,3 +180,43 @@ async def test_status_exposes_error_message(client: AsyncClient):
     assert body["error_message"] == "vLLM non joignable"
     assert isinstance(body["created_at"], int)
     assert isinstance(body["updated_at"], int)
+
+
+@pytest.mark.asyncio
+async def test_process_task_deletes_upload_dir(client: AsyncClient, tmp_path):
+    """Après _process_task, le répertoire d'upload est supprimé (succès et échec)."""
+    from app.routers.ocr import _process_task
+    from app.database import create_task
+
+    task_id = "dddddddd-eeee-ffff-0000-111111111111"
+    upload_dir = tmp_path / "uploads" / task_id
+    upload_dir.mkdir(parents=True)
+    pdf_path = upload_dir / "doc.pdf"
+    pdf_path.write_bytes(b"fake pdf")
+    output_dir = tmp_path / "outputs" / task_id
+    output_dir.mkdir(parents=True)
+
+    create_task(task_id, str(pdf_path), str(output_dir))
+
+    with patch("app.routers.ocr.run_chandra", new_callable=AsyncMock, side_effect=RuntimeError("err")):
+        await _process_task(task_id, str(pdf_path), str(output_dir))
+
+    assert not upload_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_status_touch_refreshes_updated_at(client: AsyncClient):
+    """GET /ocr/status doit rafraîchir updated_at (renouvellement du TTL)."""
+    import time
+    from app.database import create_task, get_task
+
+    task_id = "eeeeeeee-ffff-0000-1111-222222222222"
+    create_task(task_id, "/fake/doc.pdf", "/fake/out")
+    before = get_task(task_id)["updated_at"]
+    time.sleep(0.01)
+
+    r = await client.get(f"/ocr/status/{task_id}")
+    assert r.status_code == 200
+
+    after = get_task(task_id)["updated_at"]
+    assert after >= before

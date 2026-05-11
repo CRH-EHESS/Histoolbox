@@ -91,3 +91,28 @@ def update_task_error(task_id: str, message: str) -> None:
 def get_task(task_id: str) -> Optional[sqlite3.Row]:
     with _connect() as conn:
         return conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+
+
+def touch_task(task_id: str) -> None:
+    """Rafraîchit updated_at — renouvelle le TTL de la tâche."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE tasks SET updated_at = ? WHERE id = ?",
+            (int(time.time()), task_id),
+        )
+        conn.commit()
+
+
+def get_expired_tasks(cutoff: int) -> list:
+    """Retourne les tâches dont updated_at est antérieur à cutoff (timestamp Unix)."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM tasks WHERE updated_at < ?", (cutoff,)
+        ).fetchall()
+
+
+def delete_task(task_id: str) -> None:
+    """Supprime l'entrée SQLite d'une tâche."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()

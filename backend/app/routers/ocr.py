@@ -6,6 +6,7 @@ Router OCR — endpoints :
 """
 
 import json
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -13,7 +14,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
 from loguru import logger
 
-from app.database import create_task, get_task, update_task_status, update_task_error
+from app.database import create_task, get_task, touch_task, update_task_status, update_task_error
 from app.models.schemas import BlockItem, PageInfo, ResultResponse, StatusResponse, UploadResponse
 from app.services.chandra_service import run_chandra
 
@@ -39,6 +40,11 @@ async def _process_task(task_id: str, pdf_path: str, output_dir: str) -> None:
         error_msg = str(e)
         logger.error("[{}] Erreur Chandra après {:.1f}s : {}", task_id, elapsed, error_msg)
         update_task_error(task_id, error_msg)
+    finally:
+        # Suppression immédiate du PDF brut — le client le conserve dans IndexedDB
+        upload_dir = Path(pdf_path).parent
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        logger.debug("[{}] Répertoire upload supprimé : {}", task_id, upload_dir)
 
 
 @router.post("/upload", response_model=UploadResponse, status_code=202)
@@ -79,6 +85,7 @@ async def get_status(task_id: str) -> StatusResponse:
     row = get_task(task_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Tâche introuvable.")
+    touch_task(task_id)
     logger.debug("[{}] Statut consulté : {}", task_id, row["status"])
     return StatusResponse(
         task_id=task_id,
@@ -96,6 +103,7 @@ async def get_result(task_id: str) -> ResultResponse:
         raise HTTPException(status_code=404, detail="Tâche introuvable.")
     if row["status"] != "completed":
         raise HTTPException(status_code=409, detail=f"Tâche non terminée (statut : {row['status']}).")
+    touch_task(task_id)
 
     # Chandra crée un sous-répertoire output_dir/<stem>/ pour chaque fichier traité
     pdf_stem = Path(row["pdf_path"]).stem
