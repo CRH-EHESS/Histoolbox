@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
+import { tools } from "../tools/registry";
 
-/** Page d'accueil — grille de cartes d'outils. */
+/** Page d'accueil — grille de cartes générée depuis le registre des tools. */
 export function HomePage() {
   const navigate = useNavigate();
 
@@ -13,35 +14,30 @@ export function HomePage() {
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-        {/* Carte OCR */}
-        <button
-          onClick={() => navigate("/ocr/upload")}
-          className="group text-left rounded-xl border border-stone-200 bg-white p-6 shadow-sm hover:shadow-md hover:border-stone-300 transition-all"
-        >
-          <div className="text-3xl mb-3">🔍</div>
-          <h2 className="font-semibold text-lg mb-1 group-hover:text-stone-700">
-            OCR & Transcription
-          </h2>
-          <p className="text-stone-500 text-sm">
-            Transcription diplomatique de documents manuscrits et imprimés
-            anciens via le moteur Chandra.
-          </p>
-        </button>
-
-        {/* Cartes futures — placeholder */}
-        {[
-          { icon: "🗂️", title: "Classement automatique", soon: true },
-          { icon: "🔗", title: "Alignement de sources", soon: true },
-        ].map(({ icon, title }) => (
-          <div
-            key={title}
-            className="rounded-xl border border-dashed border-stone-200 p-6 opacity-40 select-none"
-          >
-            <div className="text-3xl mb-3">{icon}</div>
-            <h2 className="font-semibold text-lg mb-1">{title}</h2>
-            <p className="text-stone-400 text-sm">Bientôt disponible</p>
-          </div>
-        ))}
+          {tools.map((tool) =>
+            tool.available ? (
+              <button
+                key={tool.id}
+                onClick={() => navigate(tool.entryPath)}
+                className="group text-left rounded-xl border border-stone-200 bg-white p-6 shadow-sm hover:shadow-md hover:border-stone-300 transition-all"
+              >
+                <div className="text-3xl mb-3">{tool.icon}</div>
+                <h2 className="font-semibold text-lg mb-1 group-hover:text-stone-700">
+                  {tool.label}
+                </h2>
+                <p className="text-stone-500 text-sm">{tool.description}</p>
+              </button>
+            ) : (
+              <div
+                key={tool.id}
+                className="rounded-xl border border-dashed border-stone-200 p-6 opacity-40 select-none"
+              >
+                <div className="text-3xl mb-3">{tool.icon}</div>
+                <h2 className="font-semibold text-lg mb-1">{tool.label}</h2>
+                <p className="text-stone-400 text-sm">Bientôt disponible</p>
+              </div>
+            )
+          )}
         </div>
       </div>
     </div>

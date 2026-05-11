@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { tools } from "../tools/registry";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -22,16 +23,20 @@ export function AppShell({ children }: AppShellProps) {
             <span className="font-semibold text-sm tracking-wide">Histoolbox</span>
           </div>
 
-          {/* Navigation */}
+          {/* Navigation — générée depuis le registre des tools */}
           <nav className="flex gap-1">
             <NavLink to="/" end className={navLinkClass}>
               <span>🏠</span>
               <span>Accueil</span>
             </NavLink>
-            <NavLink to="/ocr/upload" className={navLinkClass}>
-              <span>🔍</span>
-              <span>OCR & Transcription</span>
-            </NavLink>
+            {tools
+              .filter((t) => t.available)
+              .map((tool) => (
+                <NavLink key={tool.id} to={tool.entryPath} className={navLinkClass}>
+                  <span>{tool.icon}</span>
+                  <span>{tool.label}</span>
+                </NavLink>
+              ))}
           </nav>
         </div>
       </header>
