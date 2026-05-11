@@ -37,9 +37,9 @@ jobs:
       - name: Build
         working-directory: frontend
         env:
-          # Sous-chemin GitHub Pages : /<nom-du-repo>/
+          # Sous-chemin GitHub Pages : /<nom-du-repo>/ — respecter la casse exacte du repo
           # Modifier si le repo s'appelle différemment ou si domaine personnalisé (mettre /)
-          VITE_BASE_PATH: /histoolbox/
+          VITE_BASE_PATH: /Histoolbox/
           # URL du backend distant
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
           # Active le TokenGate en production
