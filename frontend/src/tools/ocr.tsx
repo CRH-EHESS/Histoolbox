@@ -12,6 +12,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { OCRUploadPage } from "../pages/OCRUploadPage";
 import { OCRWaitingPage } from "../pages/OCRWaitingPage";
 import { OCRToolboxPage } from "../pages/OCRToolboxPage";
+import { OCRHistoryPage } from "../pages/OCRHistoryPage";
 import { getProjectsByStatus, updateProject } from "../db";
 import { api } from "../lib/apiClient";
 import type { ToolDefinition } from "./registry";
@@ -69,11 +70,13 @@ export const ocrTool: ToolDefinition = {
   description:
     "Transcription diplomatique de documents manuscrits et imprimés anciens via le moteur Chandra.",
   entryPath: "/ocr/upload",
+  historyPath: "/ocr/history",
   available: true,
   Recovery: OCRRecovery,
   routes: [
     { path: "/ocr/upload", element: <OCRUploadPage /> },
     { path: "/ocr/waiting/:taskId", element: <OCRWaitingPage /> },
     { path: "/ocr/toolbox/:taskId", element: <OCRToolboxPage /> },
+    { path: "/ocr/history", element: <OCRHistoryPage /> },
   ],
 };

@@ -25,6 +25,11 @@ export interface ToolDefinition {
   /** Si false, la carte est affichée en mode "bientôt disponible". */
   available: boolean;
   /**
+   * Route vers la page historique du tool (optionnel).
+   * Si présent, un lien "Historique" est affiché dans la nav à côté du tool.
+   */
+  historyPath?: string;
+  /**
    * Composant null-render monté au démarrage de l'app (dans le BrowserRouter).
    * Permet à chaque tool de déclarer sa propre logique de recovery/initialisation
    * sans coupler le shell à la logique métier du tool.

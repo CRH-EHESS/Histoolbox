@@ -32,10 +32,25 @@ export function AppShell({ children }: AppShellProps) {
             {tools
               .filter((t) => t.available)
               .map((tool) => (
-                <NavLink key={tool.id} to={tool.entryPath} className={navLinkClass}>
-                  <span>{tool.icon}</span>
-                  <span>{tool.label}</span>
-                </NavLink>
+                <span key={tool.id} className="flex items-center gap-0.5">
+                  <NavLink to={tool.entryPath} className={navLinkClass}>
+                    <span>{tool.icon}</span>
+                    <span>{tool.label}</span>
+                  </NavLink>
+                  {tool.historyPath && (
+                    <NavLink
+                      to={tool.historyPath}
+                      title="Historique"
+                      className={({ isActive }) =>
+                        `rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-stone-100 text-stone-400 hover:text-stone-600 ${
+                          isActive ? "bg-stone-100 text-stone-600" : ""
+                        }`
+                      }
+                    >
+                      🕐
+                    </NavLink>
+                  )}
+                </span>
               ))}
           </nav>
         </div>

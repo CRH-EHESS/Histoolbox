@@ -57,6 +57,20 @@ export interface ResultResponse {
   pages: PageInfo[];
 }
 
+/**
+ * Type normalisé pour la vue historique — outil-agnostique.
+ * Chaque tool mappe ses propres données vers cette interface.
+ */
+export interface HistoryItem {
+  id: string;
+  /** Libellé affiché dans la liste (ex : nom du fichier). */
+  label: string;
+  status: TaskStatus;
+  createdAt: number;
+  /** Route vers laquelle naviguer pour recharger ce traitement. */
+  reloadPath: string;
+}
+
 export const api = {
   uploadPdf(file: File): Promise<UploadResponse> {
     const form = new FormData();
