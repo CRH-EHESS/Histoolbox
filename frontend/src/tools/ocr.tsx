@@ -7,7 +7,7 @@
  * - la logique de recovery au démarrage (OCRRecovery).
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { OCRUploadPage } from "../pages/OCRUploadPage";
 import { OCRWaitingPage } from "../pages/OCRWaitingPage";
@@ -23,9 +23,12 @@ import type { ToolDefinition } from "./registry";
  */
 function OCRRecovery() {
   const navigate = useNavigate();
-  const location = useLocation();
+  const { pathname } = useLocation();
+  // Capture le pathname au montage — la recovery ne doit tourner qu'une seule fois.
+  const initialPathname = useRef(pathname);
 
   useEffect(() => {
+    const currentPath = initialPathname.current;
     async function recover() {
       const processing = await getProjectsByStatus("processing");
       for (const project of processing) {
@@ -37,14 +40,14 @@ function OCRRecovery() {
               markdownContent: result.markdown,
               status: "completed",
             });
-            if (location.pathname.includes(project.id)) {
+            if (currentPath.includes(project.id)) {
               navigate(`/ocr/toolbox/${project.id}`);
             }
           } else if (status === "error") {
             await updateProject(project.id, { status: "error" });
           } else {
             // Toujours en cours → naviguer vers la page d'attente pour relancer le poll
-            if (!location.pathname.includes(project.id)) {
+            if (!currentPath.includes(project.id)) {
               navigate(`/ocr/waiting/${project.id}`);
             }
           }
@@ -54,7 +57,7 @@ function OCRRecovery() {
       }
     }
     recover();
-  }, [navigate, location.pathname]);
+  }, [navigate]); // navigate est stable → l'effet ne tourne qu'une seule fois au montage
 
   return null;
 }
