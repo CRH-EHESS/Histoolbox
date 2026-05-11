@@ -131,18 +131,22 @@ histoolbox/
 │       │   ├── usePolling.ts    # Polling toutes les 5s + recovery
 │       │   └── useAutoSave.ts   # Debounce 1s → IndexedDB
 │       ├── components/
-        │   ├── AppShell.tsx     # Layout : header fixe + <main> 90 % largeur
-        │   ├── SplitView.tsx    # Panneau divisé draggable (responsive)
-        │   ├── PDFPanel.tsx     # @react-pdf-viewer (worker local, Uint8Array)
-        │   ├── MarkdownEditor.tsx # CodeMirror 6 + toggle source/aperçu
+│       │   ├── AppShell.tsx     # Layout : header fixe + <main> 90 % largeur (nav générée depuis registry)
+│       │   ├── SplitView.tsx    # Panneau divisé draggable (responsive)
+│       │   ├── PDFPanel.tsx     # @react-pdf-viewer (worker local, Uint8Array)
+│       │   ├── MarkdownEditor.tsx # CodeMirror 6 + toggle source/aperçu
 │       │   └── DropZone.tsx     # Drag & drop PDF
-│       ├── pages/
-│       │   ├── HomePage.tsx     # Grille de cartes outils
+│       ├── pages/               # Pages des tools (ne pas modifier pour ajouter un tool)
+│       │   ├── HomePage.tsx     # Grille de cartes générée depuis registry
 │       │   ├── OCRUploadPage.tsx
 │       │   ├── OCRWaitingPage.tsx
 │       │   └── OCRToolboxPage.tsx
+│       ├── tools/               # ← POINT D'ENTRÉE pour ajouter un tool
+│       │   ├── registry.ts      # Interface ToolDefinition + tableau tools[] (source unique)
+│       │   └── ocr.tsx          # Définition du tool OCR (routes, métadonnées, OCRRecovery)
 │       └── lib/
-│           ├── apiClient.ts     # Fetch wrapper centralisé
+│           ├── apiClient.ts     # Fetch wrapper centralisé + types partagés (TaskStatus, BlockItem…)
+│           ├── blockUtils.ts    # Utilitaires de navigation par blocs
 │           └── exportUtils.ts   # Export .md et .docx
 └── backend/                     # FastAPI + Python 3.11 + uv
     └── app/
@@ -152,6 +156,28 @@ histoolbox/
         ├── services/chandra_service.py  # asyncio.to_thread subprocess
         └── models/schemas.py    # Pydantic schemas
 ```
+
+### Système de tools (plug-in/plug-out)
+**Règle absolue : ajouter un tool ne doit jamais nécessiter de toucher `App.tsx`, `AppShell.tsx` ou `HomePage.tsx`.**
+
+Chaque tool est défini par une `ToolDefinition` dans `src/tools/` :
+```typescript
+interface ToolDefinition {
+  id: string;           // Clé unique
+  icon: string;         // Emoji ou chemin d'icône
+  label: string;        // Affiché dans la nav et sur la carte
+  description: string;  // Affiché sur la carte d'accueil
+  entryPath: string;    // Route principale (lien nav + carte)
+  routes: RouteObject[]; // Toutes les routes React Router du tool
+  available: boolean;   // false → carte "bientôt disponible", pas de lien nav
+  Recovery?: ComponentType; // Null-render pour la logique de démarrage/recovery
+}
+```
+
+**Pour ajouter un tool :**
+1. Créer `src/tools/<mon-tool>.tsx` → exporter une `ToolDefinition`
+2. Dans `src/tools/registry.ts` → importer et ajouter au tableau `tools[]`
+C'est tout.
 
 
 ---
