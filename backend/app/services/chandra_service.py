@@ -41,6 +41,12 @@ VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000")
 # Nombre de tentatives (configurable via env)
 _MAX_ATTEMPTS = int(os.getenv("CHANDRA_RETRY_ATTEMPTS", "3"))
 
+# Timeout global de l'inférence en secondes (configurable via env).
+# Protège contre le blocage infini du client HTTP de Chandra quand vLLM
+# est coupé sans fermer proprement ses connexions TCP.
+# Valeur par défaut : 4 heures (suffisant pour de très grands documents).
+INFERENCE_TIMEOUT_SECONDS = int(os.getenv("CHANDRA_INFERENCE_TIMEOUT", str(4 * 3600)))
+
 # Singleton InferenceManager initialisé au chargement du module.
 # Pour la méthode "vllm", __init__ se borne à poser deux attributs (self.method,
 # self.model = None) — aucun modèle chargé, coût négligeable.
@@ -170,10 +176,21 @@ async def run_chandra(pdf_path: str, output_dir: str) -> dict:
     # Le verrou garantit qu'une seule inférence Chandra tourne à la fois.
     # Les tâches en attente restent en statut 'processing' côté DB — comportement correct.
     async with _inference_lock:
-        logger.debug("Chandra | verrou acquis | pdf={}", pdf_path)
-        results: List[BatchOutputItem] = await asyncio.to_thread(
-            _chandra_with_retry, pdf_path
+        logger.debug(
+            "Chandra | verrou acquis | timeout={}s | pdf={}",
+            INFERENCE_TIMEOUT_SECONDS,
+            pdf_path,
         )
+        try:
+            results: List[BatchOutputItem] = await asyncio.wait_for(
+                asyncio.to_thread(_chandra_with_retry, pdf_path),
+                timeout=INFERENCE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"Inférence annulée : délai de {INFERENCE_TIMEOUT_SECONDS}s dépassé "
+                "(le service vLLM est peut-être inaccessible ou bloqué)."
+            ) from exc
 
     elapsed = time.monotonic() - t0
     logger.success(

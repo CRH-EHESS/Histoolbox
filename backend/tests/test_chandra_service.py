@@ -111,6 +111,22 @@ def test_inference_lock_is_asyncio_lock():
 
 
 @pytest.mark.asyncio
+async def test_run_chandra_raises_on_timeout(tmp_path):
+    """run_chandra lève RuntimeError si asyncio.wait_for expire (vLLM bloqué)."""
+    import asyncio as _asyncio
+    pdf_path = tmp_path / "doc.pdf"
+    pdf_path.write_bytes(b"fake")
+
+    async def hanging_to_thread(fn, *args, **kwargs):
+        await _asyncio.sleep(9999)  # simule un client HTTP bloqué indéfiniment
+        return []
+
+    with patch("app.services.chandra_service.asyncio.wait_for", side_effect=_asyncio.TimeoutError):
+        with pytest.raises(RuntimeError, match="délai"):
+            await run_chandra(str(pdf_path), str(tmp_path / "out"))
+
+
+@pytest.mark.asyncio
 async def test_run_chandra_serializes_concurrent_calls(tmp_path):
     """Deux appels simultanés à run_chandra sont sérialisés : le deuxième
     ne démarre qu'après la fin du premier."""
