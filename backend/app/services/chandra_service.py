@@ -16,7 +16,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import List
+from typing import Callable, List, Optional
 
 import httpx
 from loguru import logger
@@ -104,14 +104,25 @@ def _check_vllm_available() -> None:
     before_sleep=_log_retry,
     reraise=True,
 )
-def _chandra_with_retry(pdf_path: str) -> List[BatchOutputItem]:
+def _chandra_with_retry(
+    pdf_path: str,
+    on_progress: Optional[Callable[[str, int, int], None]] = None,
+) -> List[BatchOutputItem]:
     """
     Pre-flight vLLM + chargement du PDF + inférence avec retry automatique.
     Retourne la liste des BatchOutputItem (un par page).
     Ne réessaie PAS si ChandraVllmUnavailableError (vLLM absent = inutile d'attendre).
+
+    on_progress(label, step, total) : callback optionnel appelé à chaque étape clé.
     """
+    def _progress(label: str, step: int, total: int = 4) -> None:
+        if on_progress:
+            on_progress(label, step, total)
+
+    _progress("Vérification du service vLLM…", 1)
     _check_vllm_available()
 
+    _progress("Chargement du PDF…", 2)
     t_load = time.monotonic()
     images = load_file(pdf_path, {})
     logger.debug(
@@ -121,6 +132,8 @@ def _chandra_with_retry(pdf_path: str) -> List[BatchOutputItem]:
         pdf_path,
     )
 
+    n = len(images)
+    _progress(f"Transcription de {n} page{'s' if n > 1 else ''}…", 3)
     batch = [BatchInputItem(image=img, prompt_type="ocr_layout") for img in images]
     vllm_api_base = VLLM_BASE_URL.rstrip("/") + "/v1"
     logger.debug(
@@ -139,6 +152,8 @@ def _chandra_with_retry(pdf_path: str) -> List[BatchOutputItem]:
         len(results),
     )
 
+    _progress("Assemblage du document…", 4)
+
     # Vérification des erreurs par page retournées par le vLLM
     page_errors = [(i, r.error) for i, r in enumerate(results) if r.error]
     if page_errors:
@@ -151,7 +166,7 @@ def _chandra_with_retry(pdf_path: str) -> List[BatchOutputItem]:
     return results
 
 
-async def run_chandra(pdf_path: str, output_dir: str) -> dict:
+async def run_chandra(pdf_path: str, output_dir: str, task_id: Optional[str] = None) -> dict:
     """
     Lance l'inférence Chandra via l'API Python dans un thread séparé pour
     ne pas bloquer la boucle événementielle FastAPI.
@@ -161,6 +176,7 @@ async def run_chandra(pdf_path: str, output_dir: str) -> dict:
     - Lève ChandraVllmUnavailableError si vLLM est absent.
     - Lève RuntimeError si le vLLM retourne des erreurs sur certaines pages.
     - Persiste les fichiers de sortie sur disque (compatibilité avec /ocr/result).
+    - Si task_id est fourni, met à jour la progression en base à chaque étape.
 
     Retourne un dict {markdown, blocks, num_pages, total_token_count, pages}.
     """
@@ -173,8 +189,17 @@ async def run_chandra(pdf_path: str, output_dir: str) -> dict:
     )
     t0 = time.monotonic()
 
+    # Callback de progression : écrit en base depuis le thread d'inférence.
+    # update_task_progress est thread-safe (sqlite3 avec WAL ou connexion par appel).
+    if task_id:
+        from app.database import update_task_progress
+        def _on_progress(label: str, step: int, total: int) -> None:
+            update_task_progress(task_id, label, step, total)
+    else:
+        _on_progress = None  # type: ignore[assignment]
+
     # Le verrou garantit qu'une seule inférence Chandra tourne à la fois.
-    # Les tâches en attente restent en statut 'processing' côté DB — comportement correct.
+    # asyncio.wait_for impose un timeout global contre les blocages HTTP.
     async with _inference_lock:
         logger.debug(
             "Chandra | verrou acquis | timeout={}s | pdf={}",
@@ -183,7 +208,7 @@ async def run_chandra(pdf_path: str, output_dir: str) -> dict:
         )
         try:
             results: List[BatchOutputItem] = await asyncio.wait_for(
-                asyncio.to_thread(_chandra_with_retry, pdf_path),
+                asyncio.to_thread(_chandra_with_retry, pdf_path, _on_progress),
                 timeout=INFERENCE_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError as exc:

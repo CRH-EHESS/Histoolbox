@@ -55,6 +55,9 @@ export interface StatusResponse {
   error_message: string | null;
   created_at: number;
   updated_at: number;
+  progress_step: number | null;
+  progress_total: number | null;
+  progress_label: string | null;
 }
 
 export interface BlockItem {

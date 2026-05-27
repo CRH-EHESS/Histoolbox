@@ -15,6 +15,9 @@ class StatusResponse(BaseModel):
     error_message: Optional[str] = None
     created_at: int
     updated_at: int
+    progress_step: Optional[int] = None
+    progress_total: Optional[int] = None
+    progress_label: Optional[str] = None
 
 
 class BlockItem(BaseModel):

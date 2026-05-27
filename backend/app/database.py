@@ -36,21 +36,30 @@ def init_db() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS tasks (
-                id            TEXT PRIMARY KEY,
-                status        TEXT NOT NULL,
-                pdf_path      TEXT NOT NULL,
-                output_dir    TEXT NOT NULL,
-                created_at    INTEGER NOT NULL,
-                updated_at    INTEGER NOT NULL,
-                error_message TEXT
+                id              TEXT PRIMARY KEY,
+                status          TEXT NOT NULL,
+                pdf_path        TEXT NOT NULL,
+                output_dir      TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL,
+                error_message   TEXT,
+                progress_step   INTEGER,
+                progress_total  INTEGER,
+                progress_label  TEXT
             )
             """
         )
-        # Migration additive : ajoute la colonne sur une DB existante sans error_message
-        try:
-            conn.execute("ALTER TABLE tasks ADD COLUMN error_message TEXT")
-        except Exception:
-            pass  # colonne déjà présente
+        # Migrations additives sur une DB existante
+        for col, definition in [
+            ("error_message",  "TEXT"),
+            ("progress_step",  "INTEGER"),
+            ("progress_total", "INTEGER"),
+            ("progress_label", "TEXT"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {definition}")
+            except Exception:
+                pass  # colonne déjà présente
         # Tâches bloquées en 'processing' ou jamais démarrées ('pending') lors d'un
         # crash ou redémarrage du serveur → error avec message explicite.
         # Les deux statuts sont couverts car les BackgroundTasks FastAPI sont perdus
@@ -104,6 +113,16 @@ def touch_task(task_id: str) -> None:
         conn.execute(
             "UPDATE tasks SET updated_at = ? WHERE id = ?",
             (int(time.time()), task_id),
+        )
+        conn.commit()
+
+
+def update_task_progress(task_id: str, label: str, step: int, total: int) -> None:
+    """Met à jour l'avancement de l'inférence (label + numéro d'étape)."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE tasks SET progress_label = ?, progress_step = ?, progress_total = ?, updated_at = ? WHERE id = ?",
+            (label, step, total, int(time.time()), task_id),
         )
         conn.commit()
 

@@ -32,7 +32,7 @@ async def _process_task(task_id: str, pdf_path: str, output_dir: str) -> None:
     update_task_status(task_id, "processing")
     t0 = time.monotonic()
     try:
-        await run_chandra(pdf_path, output_dir)
+        await run_chandra(pdf_path, output_dir, task_id=task_id)
         elapsed = time.monotonic() - t0
         update_task_status(task_id, "completed")
         logger.success("[{}] Traitement terminé en {:.1f}s", task_id, elapsed)
@@ -96,6 +96,9 @@ async def get_status(task_id: str) -> StatusResponse:
         error_message=row["error_message"],
         created_at=int(row["created_at"]),
         updated_at=int(row["updated_at"]),
+        progress_step=row["progress_step"],
+        progress_total=row["progress_total"],
+        progress_label=row["progress_label"],
     )
 
 

@@ -17,6 +17,9 @@ const POLL_INTERVAL_MS = 5_000;
 export interface PollingState {
   status: "pending" | "processing" | "completed" | "error" | null;
   errorMessage: string | null;
+  progressStep: number | null;
+  progressTotal: number | null;
+  progressLabel: string | null;
 }
 
 /** Nombre d'erreurs réseau consécutives avant d'abandonner le polling. */
@@ -29,6 +32,9 @@ export function usePolling(taskId: string | null): PollingState {
   const [pollingState, setPollingState] = useState<PollingState>({
     status: null,
     errorMessage: null,
+    progressStep: null,
+    progressTotal: null,
+    progressLabel: null,
   });
 
   const stop = useCallback(() => {
@@ -41,9 +47,15 @@ export function usePolling(taskId: string | null): PollingState {
   const poll = useCallback(async () => {
     if (!taskId) return;
     try {
-      const { status, error_message } = await api.getStatus(taskId);
+      const { status, error_message, progress_step, progress_total, progress_label } = await api.getStatus(taskId);
       consecutiveErrors.current = 0; // réinitialise le compteur sur tout appel réussi
-      setPollingState({ status, errorMessage: error_message });
+      setPollingState({
+        status,
+        errorMessage: error_message,
+        progressStep: progress_step,
+        progressTotal: progress_total,
+        progressLabel: progress_label,
+      });
 
       if (status === "completed") {
         stop();
@@ -69,6 +81,9 @@ export function usePolling(taskId: string | null): PollingState {
         setPollingState({
           status: "error",
           errorMessage: "Le serveur est inaccessible après plusieurs tentatives.",
+          progressStep: null,
+          progressTotal: null,
+          progressLabel: null,
         });
         if (taskId) await updateProject(taskId, { status: "error" });
       }
