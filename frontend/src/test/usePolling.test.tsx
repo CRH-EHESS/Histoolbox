@@ -26,10 +26,16 @@ function wrapper({ children }: { children: ReactNode }) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
+  class MockNotification {
+    static permission = "granted";
+    constructor(_title: string, _options?: NotificationOptions) {}
+  }
+  vi.stubGlobal("Notification", MockNotification);
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("usePolling", () => {
@@ -37,6 +43,8 @@ describe("usePolling", () => {
     vi.mocked(api.getStatus).mockResolvedValue({
       task_id: "task-42", status: "processing",
       error_message: null, created_at: 0, updated_at: 0,
+      progress_step: null, progress_total: null, progress_label: null,
+      queue_position: 1,
     });
 
     renderHook(() => usePolling("task-42"), { wrapper });
@@ -51,6 +59,8 @@ describe("usePolling", () => {
     vi.mocked(api.getStatus).mockResolvedValue({
       task_id: "task-42", status: "processing",
       error_message: null, created_at: 0, updated_at: 0,
+      progress_step: null, progress_total: null, progress_label: null,
+      queue_position: 1,
     });
 
     renderHook(() => usePolling("task-42"), { wrapper });
@@ -68,6 +78,8 @@ describe("usePolling", () => {
     vi.mocked(api.getStatus).mockResolvedValue({
       task_id: "task-42", status: "completed",
       error_message: null, created_at: 0, updated_at: 1,
+      progress_step: 4, progress_total: 4, progress_label: "Assemblage du document…",
+      queue_position: null,
     });
     vi.mocked(api.getResult).mockResolvedValue({
       task_id: "task-42",
@@ -99,6 +111,8 @@ describe("usePolling", () => {
     vi.mocked(api.getStatus).mockResolvedValue({
       task_id: "task-42", status: "error",
       error_message: "vLLM error", created_at: 0, updated_at: 1,
+      progress_step: null, progress_total: null, progress_label: null,
+      queue_position: null,
     });
 
     renderHook(() => usePolling("task-42"), { wrapper });
@@ -155,6 +169,8 @@ describe("usePolling", () => {
       .mockResolvedValue({
         task_id: "task-42", status: "processing",
         error_message: null, created_at: 0, updated_at: 0,
+        progress_step: 1, progress_total: 4, progress_label: "Vérification du service vLLM…",
+        queue_position: 1,
       });
 
     const { result } = renderHook(() => usePolling("task-42"), { wrapper });
@@ -165,5 +181,19 @@ describe("usePolling", () => {
 
     expect(result.current.status).toBe("processing");
     expect(updateProject).not.toHaveBeenCalledWith("task-42", { status: "error" });
+  });
+
+  it("met à jour la position dans la file", async () => {
+    vi.mocked(api.getStatus).mockResolvedValue({
+      task_id: "task-42", status: "pending",
+      error_message: null, created_at: 0, updated_at: 0,
+      progress_step: null, progress_total: null, progress_label: null,
+      queue_position: 3,
+    });
+
+    const { result } = renderHook(() => usePolling("task-42"), { wrapper });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.queuePosition).toBe(3);
   });
 });

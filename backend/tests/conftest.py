@@ -10,6 +10,20 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+
+class DummyQueue:
+    """Queue minimale pour tests : expose enqueue() et job_ids comme RQ."""
+
+    def __init__(self):
+        self.enqueued = []
+
+    @property
+    def job_ids(self):
+        return [job["job_id"] for job in self.enqueued if job.get("job_id")]
+
+    def enqueue(self, func, *args, **kwargs):
+        self.enqueued.append({"func": func, "args": args, **kwargs})
+
 # Rediriger la DB vers un fichier temporaire avant d'importer l'app
 _tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 os.environ["HISTOOLBOX_DB_PATH"] = _tmp_db.name
@@ -34,4 +48,5 @@ async def client():
     """Client HTTP asynchrone branché directement sur l'app ASGI."""
     from app.main import app
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        app.state.rq_queue = DummyQueue()
         yield ac

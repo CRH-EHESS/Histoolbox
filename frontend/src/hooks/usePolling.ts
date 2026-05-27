@@ -20,6 +20,7 @@ export interface PollingState {
   progressStep: number | null;
   progressTotal: number | null;
   progressLabel: string | null;
+  queuePosition: number | null;
 }
 
 /** Nombre d'erreurs réseau consécutives avant d'abandonner le polling. */
@@ -35,6 +36,7 @@ export function usePolling(taskId: string | null): PollingState {
     progressStep: null,
     progressTotal: null,
     progressLabel: null,
+    queuePosition: null,
   });
 
   const stop = useCallback(() => {
@@ -47,7 +49,7 @@ export function usePolling(taskId: string | null): PollingState {
   const poll = useCallback(async () => {
     if (!taskId) return;
     try {
-      const { status, error_message, progress_step, progress_total, progress_label } = await api.getStatus(taskId);
+      const { status, error_message, progress_step, progress_total, progress_label, queue_position } = await api.getStatus(taskId);
       consecutiveErrors.current = 0; // réinitialise le compteur sur tout appel réussi
       setPollingState({
         status,
@@ -55,10 +57,18 @@ export function usePolling(taskId: string | null): PollingState {
         progressStep: progress_step,
         progressTotal: progress_total,
         progressLabel: progress_label,
+        queuePosition: queue_position,
       });
 
       if (status === "completed") {
         stop();
+        // Notification navigateur si permission accordée
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification("Transcription terminée !", {
+            body: "Votre document est prêt.",
+            icon: "/favicon.ico",
+          });
+        }
         const result = await api.getResult(taskId);
         await updateProject(taskId, {
           markdownContent: result.markdown,
@@ -84,6 +94,7 @@ export function usePolling(taskId: string | null): PollingState {
           progressStep: null,
           progressTotal: null,
           progressLabel: null,
+          queuePosition: null,
         });
         if (taskId) await updateProject(taskId, { status: "error" });
       }

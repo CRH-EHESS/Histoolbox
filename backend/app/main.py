@@ -13,6 +13,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
+from redis import Redis
+from rq import Queue
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -87,6 +89,18 @@ async def lifespan(app: FastAPI):
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     init_db()  # crée la table + corrige les tâches bloquées
+
+    # Connexion Redis + queue RQ
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    try:
+        conn = Redis.from_url(redis_url)
+        conn.ping()
+        app.state.rq_queue = Queue("ocr", connection=conn)
+        logger.info("RQ queue 'ocr' initialisée | redis={}", redis_url)
+    except Exception as exc:  # pragma: no cover
+        logger.error("Connexion Redis échouée | redis={} | {}", redis_url, exc)
+        app.state.rq_queue = None
+
     logger.info(
         "Histoolbox backend démarré | LOG_LEVEL={} | CLEANUP_TTL={}s",
         LOG_LEVEL,
@@ -95,6 +109,11 @@ async def lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(_cleanup_loop())
     yield
     cleanup_task.cancel()
+
+
+def get_rq_queue(request: Request) -> Queue:
+    """Retourne la queue RQ depuis l'état de l'app (injectée via Depends ou request.app.state)."""
+    return request.app.state.rq_queue
 
 
 # --------------------------------------------------------------------------- #

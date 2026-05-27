@@ -9,6 +9,7 @@ export function OCRUploadPage() {
   const navigate = useNavigate();
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
 
   async function handleFile(file: File) {
     setUploading(true);
@@ -25,7 +26,7 @@ export function OCRUploadPage() {
       });
 
       // 2. Envoyer au backend
-      const { task_id } = await api.uploadPdf(file);
+      const { task_id } = await api.uploadPdf(file, email.trim() || undefined);
 
       // 3. Mettre à jour l'entrée avec le vrai task_id
       //    (Dexie ne supporte pas le rename de PK, on recrée l'entrée)
@@ -56,6 +57,21 @@ export function OCRUploadPage() {
       </p>
 
       <DropZone onFile={handleFile} disabled={uploading} />
+
+      <div className="mt-4">
+        <label htmlFor="notify-email" className="block text-sm text-stone-700 mb-1">
+          Être notifié par email à la fin du traitement (optionnel)
+        </label>
+        <input
+          id="notify-email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="historien@exemple.fr"
+          className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-400"
+          disabled={uploading}
+        />
+      </div>
 
       {uploading && (
         <p className="mt-4 text-center text-stone-500 text-sm animate-pulse">

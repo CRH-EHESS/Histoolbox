@@ -8,6 +8,8 @@ from app.database import (
     create_task,
     delete_task,
     get_expired_tasks,
+    get_pending_tasks,
+    get_queue_position,
     get_task,
     touch_task,
     update_task_status,
@@ -110,9 +112,8 @@ def test_init_db_converts_processing_to_error_on_restart():
     assert "redémarrage" in row["error_message"]
 
 
-def test_init_db_converts_pending_to_error_on_restart():
-    """init_db() doit aussi convertir les tâches 'pending' en 'error' —
-    leur BackgroundTask FastAPI est perdu à chaque redémarrage du processus."""
+def test_init_db_keeps_pending_on_restart():
+    """init_db() conserve les tâches 'pending' pour permettre le requeue worker."""
     from app.database import init_db
     create_task("t-crash-pend", "/uploads/t-cpnd/doc.pdf", "/outputs/t-cpnd")
     assert get_task("t-crash-pend")["status"] == "pending"
@@ -120,9 +121,7 @@ def test_init_db_converts_pending_to_error_on_restart():
     init_db()  # simule un redémarrage
 
     row = get_task("t-crash-pend")
-    assert row["status"] == "error"
-    assert row["error_message"] is not None
-    assert "redémarrage" in row["error_message"]
+    assert row["status"] == "pending"
 
 
 def test_init_db_does_not_touch_completed_tasks():
@@ -138,3 +137,31 @@ def test_init_db_does_not_touch_completed_tasks():
 
     assert get_task("t-done")["status"] == "completed"
     assert get_task("t-err")["status"] == "error"
+
+
+def test_get_queue_position_pending_and_processing():
+    create_task("q-1", "/uploads/q1/doc.pdf", "/outputs/q1")
+    create_task("q-2", "/uploads/q2/doc.pdf", "/outputs/q2")
+    create_task("q-3", "/uploads/q3/doc.pdf", "/outputs/q3")
+
+    update_task_status("q-1", "processing")
+    assert get_queue_position("q-1") == 1
+    assert get_queue_position("q-2") == 2
+    assert get_queue_position("q-3") == 3
+
+
+def test_get_queue_position_none_for_done_or_unknown():
+    create_task("q-done", "/uploads/qd/doc.pdf", "/outputs/qd")
+    update_task_status("q-done", "completed")
+    assert get_queue_position("q-done") is None
+    assert get_queue_position("unknown") is None
+
+
+def test_get_pending_tasks_lists_only_pending():
+    create_task("p-1", "/uploads/p1/doc.pdf", "/outputs/p1")
+    create_task("p-2", "/uploads/p2/doc.pdf", "/outputs/p2")
+    update_task_status("p-2", "processing")
+
+    pending_ids = [row["id"] for row in get_pending_tasks()]
+    assert "p-1" in pending_ids
+    assert "p-2" not in pending_ids

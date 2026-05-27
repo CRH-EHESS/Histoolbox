@@ -3,13 +3,17 @@ Couche d'accès SQLite (sqlite3 stdlib, zéro ORM).
 
 Table :
     tasks(
-        id            TEXT PRIMARY KEY,
-        status        TEXT NOT NULL,          -- pending | processing | completed | error
-        pdf_path      TEXT NOT NULL,
-        output_dir    TEXT NOT NULL,
-        created_at    INTEGER NOT NULL,
-        updated_at    INTEGER NOT NULL,
-        error_message TEXT
+        id              TEXT PRIMARY KEY,
+        status          TEXT NOT NULL,  -- pending | processing | completed | error
+        pdf_path        TEXT NOT NULL,
+        output_dir      TEXT NOT NULL,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL,
+        error_message   TEXT,
+        progress_step   INTEGER,
+        progress_total  INTEGER,
+        progress_label  TEXT,
+        email           TEXT            -- adresse pour notification (nullable)
     )
 """
 
@@ -55,30 +59,33 @@ def init_db() -> None:
             ("progress_step",  "INTEGER"),
             ("progress_total", "INTEGER"),
             ("progress_label", "TEXT"),
+            ("email",          "TEXT"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {definition}")
             except Exception:
                 pass  # colonne déjà présente
-        # Tâches bloquées en 'processing' ou jamais démarrées ('pending') lors d'un
-        # crash ou redémarrage du serveur → error avec message explicite.
-        # Les deux statuts sont couverts car les BackgroundTasks FastAPI sont perdus
-        # à chaque redémarrage du processus.
+        # Tâches en cours d'inférence (processing) au moment du crash → error.
+        # Les tâches 'pending' sont conservées telles quelles : le worker RQ les
+        # ré-enqueuera via requeue_pending_tasks() au prochain démarrage.
         conn.execute(
             "UPDATE tasks SET status = 'error', "
             "error_message = 'Traitement interrompu par un redémarrage du serveur.', "
-            "updated_at = ? WHERE status IN ('pending', 'processing')",
+            "updated_at = ? WHERE status = 'processing'",
             (int(time.time()),),
         )
         conn.commit()
 
 
-def create_task(task_id: str, pdf_path: str, output_dir: str) -> None:
+def create_task(
+    task_id: str, pdf_path: str, output_dir: str, email: Optional[str] = None
+) -> None:
     now = int(time.time())
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO tasks (id, status, pdf_path, output_dir, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (task_id, "pending", pdf_path, output_dir, now, now),
+            "INSERT INTO tasks (id, status, pdf_path, output_dir, created_at, updated_at, email) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (task_id, "pending", pdf_path, output_dir, now, now, email),
         )
         conn.commit()
 
@@ -125,6 +132,35 @@ def update_task_progress(task_id: str, label: str, step: int, total: int) -> Non
             (label, step, total, int(time.time()), task_id),
         )
         conn.commit()
+
+
+def get_queue_position(task_id: str) -> Optional[int]:
+    """Retourne la position dans la file pour une tâche pending/processing (1 = en cours).
+
+    Compte le nombre de tâches pending/processing soumises avant ou en même temps
+    que celle-ci. Retourne None si la tâche est completed ou error.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT status, created_at FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if row is None or row["status"] not in ("pending", "processing"):
+            return None
+        count = conn.execute(
+            "SELECT COUNT(*) FROM tasks "
+            "WHERE status IN ('pending', 'processing') "
+            "AND (created_at < ? OR (created_at = ? AND id <= ?))",
+            (row["created_at"], row["created_at"], task_id),
+        ).fetchone()[0]
+        return count
+
+
+def get_pending_tasks() -> list:
+    """Retourne toutes les tâches en statut 'pending' (pour requeue au démarrage du worker)."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at"
+        ).fetchall()
 
 
 def get_expired_tasks(cutoff: int) -> list:

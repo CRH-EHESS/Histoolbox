@@ -318,3 +318,41 @@ def _assemble_and_persist(
         "total_token_count": metadata["total_token_count"],
         "pages": pages,
     }
+
+
+def run_chandra_sync(
+    pdf_path: str, output_dir: str, task_id: Optional[str] = None
+) -> dict:
+    """Version synchrone de run_chandra, destinée au worker RQ.
+
+    Appelle directement _chandra_with_retry sans asyncio.to_thread ni asyncio.Lock
+    (le worker RQ est single-thread ; il n'y a pas de concurrence à gérer).
+    Lève RuntimeError ou ChandraVllmUnavailableError en cas d'échec.
+    """
+    t0 = time.monotonic()
+
+    if task_id:
+        from app.database import update_task_progress
+
+        def _on_progress(label: str, step: int, total: int) -> None:
+            update_task_progress(task_id, label, step, total)
+    else:
+        _on_progress = None  # type: ignore[assignment]
+
+    logger.debug(
+        "Chandra (sync) | démarrage | timeout={}s | pdf={}",
+        INFERENCE_TIMEOUT_SECONDS,
+        pdf_path,
+    )
+    results: List[BatchOutputItem] = _chandra_with_retry(pdf_path, _on_progress)
+
+    elapsed = time.monotonic() - t0
+    logger.success(
+        "Chandra (sync) | terminé en {:.1f}s | {} page(s) | pdf={}",
+        elapsed,
+        len(results),
+        pdf_path,
+    )
+
+    stem = Path(pdf_path).stem
+    return _assemble_and_persist(stem, results, Path(output_dir) / stem)

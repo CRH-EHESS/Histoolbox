@@ -6,18 +6,16 @@ Router OCR — endpoints :
 """
 
 import json
-import shutil
-import time
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File
 from loguru import logger
 
-from app.database import create_task, get_task, touch_task, update_task_status, update_task_error
+from app.database import create_task, get_queue_position, get_task, touch_task
 from app.limiter import limiter
 from app.models.schemas import BlockItem, PageInfo, ResultResponse, StatusResponse, UploadResponse
-from app.services.chandra_service import run_chandra
+from app.worker import process_ocr_job
 
 router = APIRouter(prefix="/ocr", tags=["OCR"])
 
@@ -26,40 +24,23 @@ UPLOAD_ROOT = Path(__file__).parent.parent.parent / "data" / "uploads"
 OUTPUT_ROOT = Path(__file__).parent.parent.parent / "data" / "outputs"
 
 
-async def _process_task(task_id: str, pdf_path: str, output_dir: str) -> None:
-    """Tâche d'arrière-plan : lance Chandra et met à jour le statut SQLite."""
-    logger.info("[{}] Démarrage traitement | pdf={}", task_id, pdf_path)
-    update_task_status(task_id, "processing")
-    t0 = time.monotonic()
-    try:
-        await run_chandra(pdf_path, output_dir, task_id=task_id)
-        elapsed = time.monotonic() - t0
-        update_task_status(task_id, "completed")
-        logger.success("[{}] Traitement terminé en {:.1f}s", task_id, elapsed)
-    except Exception as e:
-        elapsed = time.monotonic() - t0
-        error_msg = str(e)
-        logger.error("[{}] Erreur Chandra après {:.1f}s : {}", task_id, elapsed, error_msg)
-        update_task_error(task_id, error_msg)
-    finally:
-        # Suppression immédiate du PDF brut — le client le conserve dans IndexedDB
-        upload_dir = Path(pdf_path).parent
-        shutil.rmtree(upload_dir, ignore_errors=True)
-        logger.debug("[{}] Répertoire upload supprimé : {}", task_id, upload_dir)
-
-
 @router.post("/upload", response_model=UploadResponse, status_code=202)
 @limiter.limit("10/minute")
 async def upload_pdf(
     request: Request,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    email: str = Form(default=""),
 ) -> UploadResponse:
     if file.content_type not in ("application/pdf", "application/octet-stream"):
         raise HTTPException(status_code=415, detail="Seuls les fichiers PDF sont acceptés.")
 
+    # Validation basique de l'email si fourni
+    normalized_email: str | None = email.strip() or None
+    if normalized_email and "@" not in normalized_email:
+        raise HTTPException(status_code=422, detail="Adresse email invalide.")
+
     task_id = str(uuid.uuid4())
-    logger.info("[{}] Upload reçu | filename={} | content_type={}", task_id, file.filename, file.content_type)
+    logger.info("[{}] Upload reçu | filename={} | email={}", task_id, file.filename, bool(normalized_email))
 
     # Sauvegarde du PDF
     task_upload_dir = UPLOAD_ROOT / task_id
@@ -67,18 +48,21 @@ async def upload_pdf(
     pdf_path = task_upload_dir / (file.filename or "input.pdf")
     content = await file.read()
     pdf_path.write_bytes(content)
-    logger.debug("[{}] PDF sauvegardé | taille={}o | chemin={}", task_id, len(content), pdf_path)
+    logger.debug("[{}] PDF sauvegardé | taille={}o", task_id, len(content))
 
     # Répertoire de sortie Chandra
     output_dir = OUTPUT_ROOT / task_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Persistance SQLite
-    create_task(task_id, str(pdf_path), str(output_dir))
+    create_task(task_id, str(pdf_path), str(output_dir), email=normalized_email)
 
-    # Lance le traitement en arrière-plan
-    background_tasks.add_task(_process_task, task_id, str(pdf_path), str(output_dir))
-    logger.info("[{}] Tâche enregistrée, traitement en arrière-plan lancé", task_id)
+    # Enqueue dans la queue RQ
+    queue = request.app.state.rq_queue
+    if queue is None:
+        raise HTTPException(status_code=503, detail="File de traitement indisponible (Redis non connecté).")
+    queue.enqueue(process_ocr_job, task_id, str(pdf_path), str(output_dir), normalized_email, job_id=task_id)
+    logger.info("[{}] Job enqueueé dans la queue RQ 'ocr'", task_id)
 
     return UploadResponse(task_id=task_id)
 
@@ -99,6 +83,7 @@ async def get_status(task_id: str) -> StatusResponse:
         progress_step=row["progress_step"],
         progress_total=row["progress_total"],
         progress_label=row["progress_label"],
+        queue_position=get_queue_position(task_id),
     )
 
 

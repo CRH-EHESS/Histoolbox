@@ -1,13 +1,32 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
   api:
     build: .
     restart: unless-stopped
     env_file: .env
+    depends_on:
+      - redis
     volumes:
       # Persistance SQLite + fichiers OCR entre les redémarrages
       - ./data:/app/data
     expose:
       - "8001"
+
+  rq_worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["uv", "run", "python", "run_worker.py"]
+    depends_on:
+      - redis
+      - api
+    volumes:
+      - ./data:/app/data
 
   caddy:
     image: caddy:2-alpine
@@ -24,5 +43,6 @@ services:
       - api
 
 volumes:
+  redis_data:
   caddy_data:
   caddy_config:

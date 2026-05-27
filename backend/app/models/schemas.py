@@ -18,6 +18,7 @@ class StatusResponse(BaseModel):
     progress_step: Optional[int] = None
     progress_total: Optional[int] = None
     progress_label: Optional[str] = None
+    queue_position: Optional[int] = None
 
 
 class BlockItem(BaseModel):

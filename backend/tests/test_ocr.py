@@ -7,7 +7,7 @@ Tests des endpoints OCR :
 
 import io
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from httpx import AsyncClient
 
 
@@ -24,8 +24,7 @@ async def test_upload_returns_task_id(client: AsyncClient):
     pdf_bytes = b"%PDF-1.4 fake pdf content"
     files = {"file": ("test.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
 
-    with patch("app.routers.ocr._process_task", new_callable=AsyncMock):
-        r = await client.post("/ocr/upload", files=files)
+    r = await client.post("/ocr/upload", files=files)
 
     assert r.status_code == 202
     body = r.json()
@@ -47,14 +46,14 @@ async def test_status_pending_after_upload(client: AsyncClient):
     pdf_bytes = b"%PDF-1.4 fake pdf content"
     files = {"file": ("test.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
 
-    with patch("app.routers.ocr._process_task", new_callable=AsyncMock):
-        upload_r = await client.post("/ocr/upload", files=files)
+    upload_r = await client.post("/ocr/upload", files=files)
 
     task_id = upload_r.json()["task_id"]
     status_r = await client.get(f"/ocr/status/{task_id}")
     assert status_r.status_code == 200
     body = status_r.json()
     assert body["status"] == "pending"
+    assert body["queue_position"] == 1
     assert isinstance(body["created_at"], int)
     assert isinstance(body["updated_at"], int)
 
@@ -72,8 +71,7 @@ async def test_result_not_completed_returns_409(client: AsyncClient):
     pdf_bytes = b"%PDF-1.4 fake pdf content"
     files = {"file": ("test.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
 
-    with patch("app.routers.ocr._process_task", new_callable=AsyncMock):
-        upload_r = await client.post("/ocr/upload", files=files)
+    upload_r = await client.post("/ocr/upload", files=files)
 
     task_id = upload_r.json()["task_id"]
     r = await client.get(f"/ocr/result/{task_id}")
@@ -138,30 +136,18 @@ async def test_result_completed(client: AsyncClient, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_process_task_error_stores_message(client: AsyncClient):
-    """Quand run_chandra lève une exception, le statut devient error et error_message est persisté."""
-    from app.routers.ocr import _process_task
-    from app.database import create_task, get_task
+async def test_upload_accepts_optional_email(client: AsyncClient):
+    """POST /ocr/upload accepte un email optionnel et persiste la valeur."""
+    from app.database import get_task
 
-    pdf_bytes = b"%PDF-1.4 fake pdf content"
-    files = {"file": ("test.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
+    files = {"file": ("test.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")}
+    data = {"email": "user@example.com"}
+    r = await client.post("/ocr/upload", files=files, data=data)
 
-    with patch("app.routers.ocr._process_task", new_callable=AsyncMock):
-        upload_r = await client.post("/ocr/upload", files=files)
-
-    task_id = upload_r.json()["task_id"]
-
-    # Rejoue _process_task manuellement avec run_chandra qui échoue
-    with patch(
-        "app.routers.ocr.run_chandra",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("vLLM non joignable"),
-    ):
-        await _process_task(task_id, "/fake/doc.pdf", "/fake/out")
-
+    assert r.status_code == 202
+    task_id = r.json()["task_id"]
     row = get_task(task_id)
-    assert row["status"] == "error"
-    assert "vLLM non joignable" in row["error_message"]
+    assert row["email"] == "user@example.com"
 
 
 @pytest.mark.asyncio
@@ -183,25 +169,12 @@ async def test_status_exposes_error_message(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_process_task_deletes_upload_dir(client: AsyncClient, tmp_path):
-    """Après _process_task, le répertoire d'upload est supprimé (succès et échec)."""
-    from app.routers.ocr import _process_task
-    from app.database import create_task
-
-    task_id = "dddddddd-eeee-ffff-0000-111111111111"
-    upload_dir = tmp_path / "uploads" / task_id
-    upload_dir.mkdir(parents=True)
-    pdf_path = upload_dir / "doc.pdf"
-    pdf_path.write_bytes(b"fake pdf")
-    output_dir = tmp_path / "outputs" / task_id
-    output_dir.mkdir(parents=True)
-
-    create_task(task_id, str(pdf_path), str(output_dir))
-
-    with patch("app.routers.ocr.run_chandra", new_callable=AsyncMock, side_effect=RuntimeError("err")):
-        await _process_task(task_id, str(pdf_path), str(output_dir))
-
-    assert not upload_dir.exists()
+async def test_upload_rejects_invalid_email(client: AsyncClient):
+    """POST /ocr/upload retourne 422 si l'email fourni est invalide."""
+    files = {"file": ("test.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")}
+    data = {"email": "invalid-email"}
+    r = await client.post("/ocr/upload", files=files, data=data)
+    assert r.status_code == 422
 
 
 @pytest.mark.asyncio

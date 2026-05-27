@@ -58,6 +58,7 @@ export interface StatusResponse {
   progress_step: number | null;
   progress_total: number | null;
   progress_label: string | null;
+  queue_position: number | null;
 }
 
 export interface BlockItem {
@@ -103,9 +104,10 @@ export interface HistoryItem {
 }
 
 export const api = {
-  uploadPdf(file: File): Promise<UploadResponse> {
+  uploadPdf(file: File, email?: string): Promise<UploadResponse> {
     const form = new FormData();
     form.append("file", file);
+    if (email) form.append("email", email);
     return request<UploadResponse>("/ocr/upload", { method: "POST", body: form });
   },
 

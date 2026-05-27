@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { usePolling } from "../hooks/usePolling";
 
@@ -36,7 +37,16 @@ function StepIcon({ state }: { state: StepState }) {
 export function OCRWaitingPage() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
-  const { status, errorMessage, progressStep } = usePolling(taskId ?? null);
+  const { status, errorMessage, progressStep, queuePosition } = usePolling(taskId ?? null);
+
+  useEffect(() => {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {
+        // Ignore silencieusement les erreurs de permission.
+      });
+    }
+  }, []);
 
   if (status === "error") {
     return (
@@ -72,6 +82,13 @@ export function OCRWaitingPage() {
           Chandra analyse votre document. Vous pouvez fermer cet onglet — le
           résultat sera automatiquement récupéré à votre retour.
         </p>
+        {status === "pending" && queuePosition !== null && (
+          <p className="text-stone-600 text-sm mt-3">
+            {queuePosition > 1
+              ? `En attente : position ${queuePosition} dans la file de traitement.`
+              : "Démarrage imminent..."}
+          </p>
+        )}
       </div>
 
       {/* Liste des étapes */}
