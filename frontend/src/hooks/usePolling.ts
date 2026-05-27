@@ -19,9 +19,13 @@ export interface PollingState {
   errorMessage: string | null;
 }
 
+/** Nombre d'erreurs réseau consécutives avant d'abandonner le polling. */
+const MAX_CONSECUTIVE_ERRORS = 3;
+
 export function usePolling(taskId: string | null): PollingState {
   const navigate = useNavigate();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const consecutiveErrors = useRef(0);
   const [pollingState, setPollingState] = useState<PollingState>({
     status: null,
     errorMessage: null,
@@ -38,6 +42,7 @@ export function usePolling(taskId: string | null): PollingState {
     if (!taskId) return;
     try {
       const { status, error_message } = await api.getStatus(taskId);
+      consecutiveErrors.current = 0; // réinitialise le compteur sur tout appel réussi
       setPollingState({ status, errorMessage: error_message });
 
       if (status === "completed") {
@@ -55,7 +60,18 @@ export function usePolling(taskId: string | null): PollingState {
         await updateProject(taskId, { status: "error" });
       }
     } catch {
-      // Erreur réseau transitoire — on continue de poller
+      // Erreur réseau : on tolère jusqu'à MAX_CONSECUTIVE_ERRORS erreurs consécutives
+      // (transitoires : coupure réseau, redémarrage du backend…).
+      // Au-delà, on arrête le polling et on surface l'erreur à l'utilisateur.
+      consecutiveErrors.current += 1;
+      if (consecutiveErrors.current >= MAX_CONSECUTIVE_ERRORS) {
+        stop();
+        setPollingState({
+          status: "error",
+          errorMessage: "Le serveur est inaccessible après plusieurs tentatives.",
+        });
+        if (taskId) await updateProject(taskId, { status: "error" });
+      }
     }
   }, [taskId, navigate, stop]);
 

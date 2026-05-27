@@ -111,4 +111,59 @@ describe("usePolling", () => {
     expect(() => renderHook(() => usePolling(null), { wrapper })).not.toThrow();
     expect(api.getStatus).not.toHaveBeenCalled();
   });
+
+  // -------------------------------------------------------------------------
+  // Gestion des erreurs réseau consécutives (Bug 2)
+  // -------------------------------------------------------------------------
+
+  it("arrête le polling et passe à error après 3 erreurs réseau consécutives", async () => {
+    vi.mocked(api.getStatus).mockRejectedValue(new Error("Network error"));
+
+    const { result } = renderHook(() => usePolling("task-42"), { wrapper });
+
+    // Poll 1 : immédiat
+    await act(async () => { await Promise.resolve(); });
+    // Poll 2 : +5s
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); });
+    // Poll 3 : +10s — 3e erreur consécutive, déclenche l'abandon
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); });
+
+    expect(result.current.status).toBe("error");
+    expect(result.current.errorMessage).toMatch(/inaccessible/);
+    expect(updateProject).toHaveBeenCalledWith("task-42", { status: "error" });
+  });
+
+  it("n'arrête pas le polling avant 3 erreurs consécutives", async () => {
+    vi.mocked(api.getStatus).mockRejectedValue(new Error("Network error"));
+
+    const { result } = renderHook(() => usePolling("task-42"), { wrapper });
+
+    // Seulement 2 erreurs
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); });
+
+    // Pas encore à error
+    expect(result.current.status).not.toBe("error");
+    expect(updateProject).not.toHaveBeenCalledWith("task-42", { status: "error" });
+  });
+
+  it("réinitialise le compteur d'erreurs après un appel réussi", async () => {
+    // 2 échecs, puis 1 succès : le compteur est remis à zéro, pas de status error
+    vi.mocked(api.getStatus)
+      .mockRejectedValueOnce(new Error("fail 1"))
+      .mockRejectedValueOnce(new Error("fail 2"))
+      .mockResolvedValue({
+        task_id: "task-42", status: "processing",
+        error_message: null, created_at: 0, updated_at: 0,
+      });
+
+    const { result } = renderHook(() => usePolling("task-42"), { wrapper });
+
+    await act(async () => { await Promise.resolve(); });           // fail 1
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); }); // fail 2
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); }); // succès
+
+    expect(result.current.status).toBe("processing");
+    expect(updateProject).not.toHaveBeenCalledWith("task-42", { status: "error" });
+  });
 });

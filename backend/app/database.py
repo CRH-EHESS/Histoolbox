@@ -51,9 +51,14 @@ def init_db() -> None:
             conn.execute("ALTER TABLE tasks ADD COLUMN error_message TEXT")
         except Exception:
             pass  # colonne déjà présente
-        # Tâches bloquées en 'processing' lors d'un crash précédent → error
+        # Tâches bloquées en 'processing' ou jamais démarrées ('pending') lors d'un
+        # crash ou redémarrage du serveur → error avec message explicite.
+        # Les deux statuts sont couverts car les BackgroundTasks FastAPI sont perdus
+        # à chaque redémarrage du processus.
         conn.execute(
-            "UPDATE tasks SET status = 'error', updated_at = ? WHERE status = 'processing'",
+            "UPDATE tasks SET status = 'error', "
+            "error_message = 'Traitement interrompu par un redémarrage du serveur.', "
+            "updated_at = ? WHERE status IN ('pending', 'processing')",
             (int(time.time()),),
         )
         conn.commit()

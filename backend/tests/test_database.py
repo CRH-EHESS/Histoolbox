@@ -89,3 +89,52 @@ def test_delete_task_removes_entry():
     assert get_task("t-delete") is not None
     delete_task("t-delete")
     assert get_task("t-delete") is None
+
+
+# ---------------------------------------------------------------------------
+# init_db crash-recovery (Bug 1)
+# ---------------------------------------------------------------------------
+
+def test_init_db_converts_processing_to_error_on_restart():
+    """init_db() doit convertir les tâches 'processing' en 'error' au redémarrage."""
+    from app.database import init_db, update_task_error
+    create_task("t-crash-proc", "/uploads/t-cp/doc.pdf", "/outputs/t-cp")
+    update_task_status("t-crash-proc", "processing")
+    assert get_task("t-crash-proc")["status"] == "processing"
+
+    init_db()  # simule un redémarrage
+
+    row = get_task("t-crash-proc")
+    assert row["status"] == "error"
+    assert row["error_message"] is not None
+    assert "redémarrage" in row["error_message"]
+
+
+def test_init_db_converts_pending_to_error_on_restart():
+    """init_db() doit aussi convertir les tâches 'pending' en 'error' —
+    leur BackgroundTask FastAPI est perdu à chaque redémarrage du processus."""
+    from app.database import init_db
+    create_task("t-crash-pend", "/uploads/t-cpnd/doc.pdf", "/outputs/t-cpnd")
+    assert get_task("t-crash-pend")["status"] == "pending"
+
+    init_db()  # simule un redémarrage
+
+    row = get_task("t-crash-pend")
+    assert row["status"] == "error"
+    assert row["error_message"] is not None
+    assert "redémarrage" in row["error_message"]
+
+
+def test_init_db_does_not_touch_completed_tasks():
+    """init_db() ne doit pas modifier les tâches déjà 'completed' ou 'error'."""
+    from app.database import init_db
+    create_task("t-done", "/uploads/t-done/doc.pdf", "/outputs/t-done")
+    update_task_status("t-done", "completed")
+
+    create_task("t-err", "/uploads/t-err/doc.pdf", "/outputs/t-err")
+    update_task_status("t-err", "error")
+
+    init_db()
+
+    assert get_task("t-done")["status"] == "completed"
+    assert get_task("t-err")["status"] == "error"

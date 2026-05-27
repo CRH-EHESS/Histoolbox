@@ -99,6 +99,49 @@ def test_check_vllm_available_success():
     mock_get.assert_called_once()
 
 
+# ---------------------------------------------------------------------------
+# Verrou de sérialisation (Bug 3)
+# ---------------------------------------------------------------------------
+
+def test_inference_lock_is_asyncio_lock():
+    """_inference_lock doit être un asyncio.Lock — garantit la sérialisation."""
+    import asyncio
+    from app.services.chandra_service import _inference_lock
+    assert isinstance(_inference_lock, asyncio.Lock)
+
+
+@pytest.mark.asyncio
+async def test_run_chandra_serializes_concurrent_calls(tmp_path):
+    """Deux appels simultanés à run_chandra sont sérialisés : le deuxième
+    ne démarre qu'après la fin du premier."""
+    import asyncio as _asyncio
+
+    pdf1 = tmp_path / "doc1.pdf"
+    pdf2 = tmp_path / "doc2.pdf"
+    pdf1.write_bytes(b"fake")
+    pdf2.write_bytes(b"fake")
+
+    call_log: list[str] = []
+    fake_results = [_make_page()]
+
+    async def slow_to_thread(fn, *args, **kwargs):
+        call_log.append("start")
+        await _asyncio.sleep(0.05)
+        call_log.append("end")
+        return fake_results
+
+    with patch("app.services.chandra_service.asyncio.to_thread", side_effect=slow_to_thread):
+        t1 = _asyncio.create_task(run_chandra(str(pdf1), str(tmp_path / "out1")))
+        t2 = _asyncio.create_task(run_chandra(str(pdf2), str(tmp_path / "out2")))
+        await _asyncio.gather(t1, t2)
+
+    # Sérialisé : start → end → start → end
+    # Concurrent (bug) : start → start → end → end
+    assert call_log == ["start", "end", "start", "end"], (
+        f"Appels non sérialisés : {call_log}"
+    )
+
+
 def test_check_vllm_available_fallback_to_models():
     """_check_vllm_available essaie /v1/models si /health échoue."""
     def side_effect(url, timeout):

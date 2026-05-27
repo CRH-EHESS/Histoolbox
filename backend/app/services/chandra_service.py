@@ -47,6 +47,12 @@ _MAX_ATTEMPTS = int(os.getenv("CHANDRA_RETRY_ATTEMPTS", "3"))
 _manager = InferenceManager(method="vllm")
 logger.debug("Chandra | InferenceManager(method='vllm') initialisé")
 
+# Verrou asyncio : sérialise les appels concurrents à run_chandra.
+# Justification : vLLM traite les requêtes en série ; le singleton _manager n'est
+# pas garanti thread-safe. Un Lock asyncio évite toute contention sans bloquer
+# la boucle événementielle FastAPI (les coroutines attendent, pas les threads).
+_inference_lock = asyncio.Lock()
+
 
 class ChandraVllmUnavailableError(RuntimeError):
     """Levée quand le service vLLM n'est pas joignable avant l'inférence."""
@@ -161,9 +167,13 @@ async def run_chandra(pdf_path: str, output_dir: str) -> dict:
     )
     t0 = time.monotonic()
 
-    results: List[BatchOutputItem] = await asyncio.to_thread(
-        _chandra_with_retry, pdf_path
-    )
+    # Le verrou garantit qu'une seule inférence Chandra tourne à la fois.
+    # Les tâches en attente restent en statut 'processing' côté DB — comportement correct.
+    async with _inference_lock:
+        logger.debug("Chandra | verrou acquis | pdf={}", pdf_path)
+        results: List[BatchOutputItem] = await asyncio.to_thread(
+            _chandra_with_retry, pdf_path
+        )
 
     elapsed = time.monotonic() - t0
     logger.success(

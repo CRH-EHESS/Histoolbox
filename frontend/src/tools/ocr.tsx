@@ -32,6 +32,10 @@ function OCRRecovery() {
     const currentPath = initialPathname.current;
     async function recover() {
       const processing = await getProjectsByStatus("processing");
+      if (processing.length === 0) return;
+
+      const stillProcessingIds: string[] = [];
+
       for (const project of processing) {
         try {
           const { status } = await api.getStatus(project.id);
@@ -41,20 +45,30 @@ function OCRRecovery() {
               markdownContent: result.markdown,
               status: "completed",
             });
+            // Naviguer vers la toolbox uniquement si l'utilisateur était
+            // déjà sur la page d'attente de cette tâche spécifique.
             if (currentPath.includes(project.id)) {
               navigate(`/ocr/toolbox/${project.id}`);
+              return; // une seule navigation à la fois
             }
           } else if (status === "error") {
             await updateProject(project.id, { status: "error" });
           } else {
-            // Toujours en cours → naviguer vers la page d'attente pour relancer le poll
-            if (!currentPath.includes(project.id)) {
-              navigate(`/ocr/waiting/${project.id}`);
-            }
+            stillProcessingIds.push(project.id);
           }
         } catch {
-          // Backend inaccessible — on laisse la tâche en processing
+          // Backend inaccessible — on conserve la tâche en processing
+          stillProcessingIds.push(project.id);
         }
+      }
+
+      // Navigation uniquement si l'utilisateur n'est pas déjà sur une page d'attente.
+      // Plusieurs tâches en cours : l'historique est le point d'entrée le plus neutre.
+      if (currentPath.startsWith("/ocr/waiting/")) return;
+      if (stillProcessingIds.length === 1) {
+        navigate(`/ocr/waiting/${stillProcessingIds[0]}`);
+      } else if (stillProcessingIds.length > 1) {
+        navigate("/ocr/history");
       }
     }
     recover();
