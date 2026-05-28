@@ -43,11 +43,14 @@ interface OCRProject {
 
 ### A. Landing Page & Ingestion
 - Interface en grille (Cards) présentant les outils.
-- Au clic sur "OCR & Transcription", ouverture d'une zone de Drag & Drop.
-- Lors de l'upload :
-  1. Stockage immédiat du PDF dans IndexedDB.
-  2. Envoi du fichier à l'API FastAPI `/ocr/upload`.
-  3. Réception d'un `task_id`.
+- Au clic sur "OCR & Transcription", ouverture d'une zone de Drag & Drop multi-fichiers.
+- Lors de l'upload (un ou plusieurs PDF) :
+  1. L'utilisateur dépose jusqu'à 20 fichiers PDF dans la `DropZone`.
+  2. Les fichiers s'accumulent dans une file locale (`UploadQueue`) avant envoi.
+  3. Au clic sur "Lancer", les fichiers sont envoyés **séquentiellement** au backend (`POST /ocr/upload` appelé N fois).
+  4. Chaque fichier : stockage immédiat dans IndexedDB → envoi → réception du `task_id`.
+  5. Navigation post-envoi : 1 fichier → `/ocr/waiting/:taskId` ; 2+ fichiers → `/ocr/history`.
+  6. Les erreurs partielles restent visibles dans la file sans bloquer les autres envois.
 
 ### B. Gestion de l'Attente (Polling)
 - Le traitement par Chandra pouvant durer plusieurs heures, l'interface doit afficher un écran de chargement persistant.
@@ -120,6 +123,7 @@ Note sur PDF.js : Toujours utiliser pdfjs-dist@3.4.120 avec @react-pdf-viewer po
 - **Rendu Markdown :** `marked` + `DOMPurify` pour le mode aperçu (sécurisation XSS)
 - **Worker PDF.js :** référencé localement via `new URL("pdfjs-dist/build/pdf.worker.min.js", import.meta.url)` pour éviter les restrictions cross-origin
 - **Layout :** header horizontal fixe (pas de sidebar) ; zone de contenu 90 % de largeur, centrée
+- **Multi-upload web :** max 20 fichiers par lot ; envoi séquentiel (1 requête à la fois) ; 1 fichier → `/ocr/waiting/:id`, 2+ fichiers → `/ocr/history` ; les erreurs partielles n'interrompent pas la séquence ; pour les gros volumes (>20 fichiers) → CLI
 
 ### Structure du projet implémentée
 ```
@@ -135,7 +139,8 @@ histoolbox/
 │       │   ├── SplitView.tsx    # Panneau divisé draggable (responsive)
 │       │   ├── PDFPanel.tsx     # @react-pdf-viewer (worker local, Uint8Array)
 │       │   ├── MarkdownEditor.tsx # CodeMirror 6 + toggle source/aperçu
-│       │   └── DropZone.tsx     # Drag & drop PDF
+│       │   ├── DropZone.tsx     # Drag & drop multi-PDF (MAX_FILES=20, filtre MIME, déduplication)
+│       │   └── UploadQueue.tsx  # Liste présentationnelle de la file d'upload locale (PendingUploadItem)
 │       ├── pages/               # Pages des tools (ne pas modifier pour ajouter un tool)
 │       │   ├── HomePage.tsx     # Grille de cartes générée depuis registry
 │       │   ├── OCRUploadPage.tsx

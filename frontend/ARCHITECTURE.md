@@ -195,7 +195,8 @@ src/
 │   ├── PDFPanel.tsx         ← viewer PDF (@react-pdf-viewer)
 │   ├── MarkdownEditor.tsx   ← éditeur CodeMirror 6
 │   ├── BlockOverlay.tsx     ← overlay de blocs sur le PDF
-│   └── DropZone.tsx         ← drag & drop fichier
+│   ├── DropZone.tsx         ← drag & drop multi-fichiers PDF (max 20)
+│   └── UploadQueue.tsx      ← liste présentationnelle de la file d'upload locale
 │
 ├── hooks/
 │   ├── usePolling.ts        ← polling /ocr/status toutes les 5s
