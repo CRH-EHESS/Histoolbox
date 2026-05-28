@@ -21,6 +21,8 @@ async def test_health(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_upload_returns_task_id(client: AsyncClient):
     """POST /ocr/upload doit retourner un task_id UUID."""
+    from app.main import app
+
     pdf_bytes = b"%PDF-1.4 fake pdf content"
     files = {"file": ("test.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
 
@@ -30,6 +32,8 @@ async def test_upload_returns_task_id(client: AsyncClient):
     body = r.json()
     assert "task_id" in body
     assert len(body["task_id"]) == 36  # format UUID
+    assert len(app.state.rq_queue.enqueued) == 1
+    assert app.state.rq_queue.enqueued[0]["job_timeout"] > 180
 
 
 @pytest.mark.asyncio
