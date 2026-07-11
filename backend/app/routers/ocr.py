@@ -1,6 +1,7 @@
 """
 Router OCR — endpoints :
-  POST /ocr/upload
+  POST /ocr/upload               — upload monolithique (rétrocompatibilité CLI)
+  POST /ocr/upload/chunk         — upload par chunks de 5 Mo (web)
   GET  /ocr/status/{task_id}
   GET  /ocr/result/{task_id}
 """
@@ -12,9 +13,19 @@ from pathlib import Path
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File
 from loguru import logger
 
-from app.database import create_task, get_queue_position, get_task, touch_task
+from app.database import (
+    create_task,
+    create_task_pending_upload,
+    delete_upload_chunks,
+    get_queue_position,
+    get_received_chunks_count,
+    get_task,
+    register_chunk,
+    touch_task,
+    update_task_status,
+)
 from app.limiter import limiter
-from app.models.schemas import BlockItem, PageInfo, ResultResponse, StatusResponse, UploadResponse
+from app.models.schemas import BlockItem, ChunkUploadResponse, PageInfo, ResultResponse, StatusResponse, UploadResponse
 from app.services.chandra_service import INFERENCE_TIMEOUT_SECONDS
 from app.worker import process_ocr_job
 
@@ -79,6 +90,120 @@ async def upload_pdf(
     logger.info("[{}] Job enqueueé dans la queue RQ 'ocr'", task_id)
 
     return UploadResponse(task_id=task_id)
+
+
+@router.post("/upload/chunk", response_model=ChunkUploadResponse, status_code=202)
+@limiter.limit("60/minute")
+async def upload_chunk(
+    request: Request,
+    task_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    filename: str = Form(...),
+    chunk: UploadFile = File(...),
+    email: str = Form(default=""),
+) -> ChunkUploadResponse:
+    """Reçoit un chunk d'un PDF découpé côté client (5 Mo max par chunk).
+
+    Protocole :
+    - Le client génère un task_id (UUID) avant le premier envoi.
+    - Chunk 0 crée la tâche en statut 'pending_upload' et les répertoires.
+    - Chaque chunk est écrit dans data/uploads/<task_id>/chunk_<index>.bin.
+    - Lorsque tous les chunks sont reçus, le PDF est assemblé et le job est
+      enqueued dans RQ (statut passe à 'pending').
+    """
+    # Validation
+    if total_chunks < 1:
+        raise HTTPException(status_code=422, detail="total_chunks doit être ≥ 1.")
+    if chunk_index < 0 or chunk_index >= total_chunks:
+        raise HTTPException(status_code=422, detail=f"chunk_index {chunk_index} hors plage [0, {total_chunks - 1}].")
+
+    normalized_email: str | None = email.strip() or None
+    if normalized_email and "@" not in normalized_email:
+        raise HTTPException(status_code=422, detail="Adresse email invalide.")
+
+    # Vérifier l'état de la tâche (sauf pour le premier chunk qui la crée)
+    task_upload_dir = UPLOAD_ROOT / task_id
+    if chunk_index == 0:
+        # Créer la tâche et les répertoires — idempotent si chunk 0 est renvoyé
+        existing = get_task(task_id)
+        if existing is None:
+            task_upload_dir.mkdir(parents=True, exist_ok=True)
+            output_dir = OUTPUT_ROOT / task_id
+            output_dir.mkdir(parents=True, exist_ok=True)
+            pdf_path = task_upload_dir / filename
+            create_task_pending_upload(task_id, str(pdf_path), str(output_dir), email=normalized_email)
+            logger.info(
+                "[{}] Début upload chunked | filename={} | total_chunks={} | email={}",
+                task_id, filename, total_chunks, bool(normalized_email),
+            )
+        elif existing["status"] != "pending_upload":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Impossible d'ajouter un chunk : statut actuel '{existing['status']}'.",
+            )
+        else:
+            # Chunk 0 renvoyé pour une tâche déjà initialisée — on continue sans recréer
+            task_upload_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        row = get_task(task_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Tâche introuvable (le chunk 0 doit être envoyé en premier).")
+        if row["status"] != "pending_upload":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Impossible d'ajouter un chunk : statut actuel '{row['status']}'.",
+            )
+
+    # Écrire le chunk temporaire
+    chunk_path = task_upload_dir / f"chunk_{chunk_index}.bin"
+    content = await chunk.read()
+    chunk_path.write_bytes(content)
+    logger.debug("[{}] Chunk {}/{} reçu | taille={}o", task_id, chunk_index + 1, total_chunks, len(content))
+
+    # Enregistrer le chunk en base (idempotent)
+    register_chunk(task_id, chunk_index)
+    chunks_received = get_received_chunks_count(task_id)
+
+    assembled = False
+    if chunks_received == total_chunks:
+        # Assembler les chunks dans l'ordre
+        row = get_task(task_id)
+        pdf_path = Path(row["pdf_path"])
+        output_dir = Path(row["output_dir"])
+
+        with pdf_path.open("wb") as out_f:
+            for i in range(total_chunks):
+                out_f.write((task_upload_dir / f"chunk_{i}.bin").read_bytes())
+
+        # Supprimer les fichiers temporaires
+        for i in range(total_chunks):
+            (task_upload_dir / f"chunk_{i}.bin").unlink(missing_ok=True)
+
+        delete_upload_chunks(task_id)
+        update_task_status(task_id, "pending")
+
+        queue = request.app.state.rq_queue
+        if queue is None:
+            raise HTTPException(status_code=503, detail="File de traitement indisponible (Redis non connecté).")
+        queue.enqueue(
+            process_ocr_job,
+            task_id,
+            str(pdf_path),
+            str(output_dir),
+            row["email"],
+            job_id=task_id,
+            job_timeout=_RQ_JOB_TIMEOUT,
+        )
+        assembled = True
+        logger.info("[{}] PDF assemblé ({} chunks) et job enqueued", task_id, total_chunks)
+
+    return ChunkUploadResponse(
+        task_id=task_id,
+        chunks_received=chunks_received,
+        total_chunks=total_chunks,
+        assembled=assembled,
+    )
 
 
 @router.get("/status/{task_id}", response_model=StatusResponse)

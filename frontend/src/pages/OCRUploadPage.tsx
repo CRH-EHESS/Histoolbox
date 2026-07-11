@@ -40,8 +40,12 @@ export function OCRUploadPage() {
   }
 
   /**
-   * Envoie les fichiers au backend un par un (séquentiel intentionnel :
-   * évite de saturer le backend et préserve l'ordre visuel).
+   * Envoie les fichiers au backend un par un via upload par chunks (séquentiel
+   * intentionnel : évite de saturer le backend et préserve l'ordre visuel).
+   *
+   * Le task_id est généré côté client avant tout envoi, ce qui permet de
+   * sauvegarder le blob PDF dans IndexedDB avec son ID définitif dès le départ
+   * (plus de double write tempId → real_id).
    */
   async function handleSubmit() {
     if (items.length === 0 || submitting) return;
@@ -56,54 +60,58 @@ export function OCRUploadPage() {
         continue;
       }
 
+      // Générer le task_id côté client avant tout accès réseau
+      const taskId = crypto.randomUUID();
+
       setItems((prev) =>
         prev.map((i) =>
           i.localId === item.localId ? { ...i, status: "uploading" } : i
         )
       );
 
-      const tempId = `local-${Date.now()}-${Math.random()}`;
       try {
-        // 1. Sauvegarder en IndexedDB avant l'appel réseau
+        // 1. Sauvegarder en IndexedDB avec l'ID définitif dès le départ
         await createProject({
-          id: tempId,
+          id: taskId,
           fileName: item.file.name,
           pdfBlob: item.file,
           markdownContent: "",
           status: "pending",
         });
 
-        // 2. Envoyer au backend
-        const { task_id } = await api.uploadPdf(
+        // 2. Envoyer par chunks avec progression
+        await api.uploadPdfChunked(
           item.file,
-          email.trim() || undefined
+          taskId,
+          email.trim() || undefined,
+          (sent, total) => {
+            setItems((prev) =>
+              prev.map((i) =>
+                i.localId === item.localId
+                  ? { ...i, uploadProgress: { sent, total } }
+                  : i
+              )
+            );
+          },
         );
 
-        // 3. Remplacer l'entrée temporaire par le vrai task_id
-        //    (Dexie ne supporte pas le rename de PK)
-        await db.ocr_projects.delete(tempId);
-        await createProject({
-          id: task_id,
-          fileName: item.file.name,
-          pdfBlob: item.file,
-          markdownContent: "",
-          status: "pending",
-        });
-
-        launched.push(task_id);
+        launched.push(taskId);
         setItems((prev) =>
           prev.map((i) =>
-            i.localId === item.localId ? { ...i, status: "queued" } : i
+            i.localId === item.localId
+              ? { ...i, status: "queued", uploadProgress: undefined }
+              : i
           )
         );
       } catch (err) {
-        await db.ocr_projects.delete(tempId).catch(() => {});
+        // En cas d'échec, supprimer l'entrée IndexedDB pour éviter les fantômes
+        await db.ocr_projects.delete(taskId).catch(() => {});
         const msg =
           err instanceof Error ? err.message : "Erreur lors de l'envoi.";
         setItems((prev) =>
           prev.map((i) =>
             i.localId === item.localId
-              ? { ...i, status: "error", errorMessage: msg }
+              ? { ...i, status: "error", errorMessage: msg, uploadProgress: undefined }
               : i
           )
         );

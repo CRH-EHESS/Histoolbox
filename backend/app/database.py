@@ -1,10 +1,10 @@
 """
 Couche d'accès SQLite (sqlite3 stdlib, zéro ORM).
 
-Table :
+Tables :
     tasks(
         id              TEXT PRIMARY KEY,
-        status          TEXT NOT NULL,  -- pending | processing | completed | error
+        status          TEXT NOT NULL,  -- pending_upload | pending | processing | completed | error
         pdf_path        TEXT NOT NULL,
         output_dir      TEXT NOT NULL,
         created_at      INTEGER NOT NULL,
@@ -15,6 +15,21 @@ Table :
         progress_label  TEXT,
         email           TEXT            -- adresse pour notification (nullable)
     )
+    upload_chunks(
+        task_id         TEXT    NOT NULL,
+        chunk_index     INTEGER NOT NULL,
+        PRIMARY KEY (task_id, chunk_index)
+    )
+
+Statuts de tasks :
+    pending_upload  — le fichier est en cours de réception par chunks (pas encore enqueued)
+    pending         — fichier complet, en attente dans la queue RQ
+    processing      — en cours d'inférence par le worker
+    completed       — traitement terminé avec succès
+    error           — erreur (inférence, timeout ou upload interrompu)
+
+Note : au redémarrage de l'API, pending_upload ET processing sont basculés en error
+(l'inférence et l'assemblage ne peuvent pas reprendre à mi-chemin).
 """
 
 import os
@@ -35,7 +50,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Crée la table si elle n'existe pas et corrige les tâches bloquées."""
+    """Crée les tables si elles n'existent pas et corrige les tâches bloquées."""
     with _connect() as conn:
         conn.execute(
             """
@@ -53,6 +68,15 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS upload_chunks (
+                task_id     TEXT    NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                PRIMARY KEY (task_id, chunk_index)
+            )
+            """
+        )
         # Migrations additives sur une DB existante
         for col, definition in [
             ("error_message",  "TEXT"),
@@ -65,13 +89,15 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {definition}")
             except Exception:
                 pass  # colonne déjà présente
-        # Tâches en cours d'inférence (processing) au moment du crash → error.
-        # Les tâches 'pending' sont conservées telles quelles : le worker RQ les
-        # ré-enqueuera via requeue_pending_tasks() au prochain démarrage.
+        # Tâches dont l'inférence était en cours au moment du crash → error.
+        # Tâches dont l'upload par chunks était en cours → error (assemblage
+        # impossible à reprendre à mi-chemin).
+        # Les tâches 'pending' sont conservées : le worker RQ les ré-enqueuera
+        # via requeue_pending_tasks() au prochain démarrage.
         conn.execute(
             "UPDATE tasks SET status = 'error', "
             "error_message = 'Traitement interrompu par un redémarrage du serveur.', "
-            "updated_at = ? WHERE status = 'processing'",
+            "updated_at = ? WHERE status IN ('processing', 'pending_upload')",
             (int(time.time()),),
         )
         conn.commit()
@@ -175,4 +201,48 @@ def delete_task(task_id: str) -> None:
     """Supprime l'entrée SQLite d'une tâche."""
     with _connect() as conn:
         conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Helpers upload par chunks
+# ---------------------------------------------------------------------------
+
+def create_task_pending_upload(
+    task_id: str, pdf_path: str, output_dir: str, email: Optional[str] = None
+) -> None:
+    """Crée une tâche en statut 'pending_upload' (fichier pas encore complet)."""
+    now = int(time.time())
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO tasks (id, status, pdf_path, output_dir, created_at, updated_at, email) "
+            "VALUES (?, 'pending_upload', ?, ?, ?, ?, ?)",
+            (task_id, pdf_path, output_dir, now, now, email),
+        )
+        conn.commit()
+
+
+def register_chunk(task_id: str, chunk_index: int) -> None:
+    """Enregistre la réception d'un chunk (idempotent : INSERT OR IGNORE)."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO upload_chunks (task_id, chunk_index) VALUES (?, ?)",
+            (task_id, chunk_index),
+        )
+        conn.commit()
+
+
+def get_received_chunks_count(task_id: str) -> int:
+    """Retourne le nombre de chunks déjà reçus pour une tâche."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM upload_chunks WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        return row[0] if row else 0
+
+
+def delete_upload_chunks(task_id: str) -> None:
+    """Supprime les entrées upload_chunks une fois l'assemblage terminé."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM upload_chunks WHERE task_id = ?", (task_id,))
         conn.commit()

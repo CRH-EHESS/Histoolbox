@@ -67,12 +67,16 @@ graph TD
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending : POST /ocr/upload\n(job enqueued dans Redis)
+    [*] --> pending_upload : POST /ocr/upload/chunk\n(chunk 0 — web)
+    [*] --> pending : POST /ocr/upload\n(monolithique — CLI)
+    pending_upload --> pending_upload : Chunks suivants reçus
+    pending_upload --> pending : Dernier chunk → assemblage\n→ job enqueued
     pending --> pending : Crash Redis + redémarrage worker\n(requeue_pending_tasks)
     pending --> processing : Worker démarre l'inférence\n(BLPOP Redis)
     processing --> completed : Chandra termine ✓\n→ email envoyé si fourni
     processing --> error : Timeout / vLLM ✗\n→ email envoyé si fourni
     processing --> error : Crash serveur API\n(init_db marque processing → error)
+    pending_upload --> error : Crash serveur API\n(init_db marque pending_upload → error)
     completed --> [*] : Nettoyage TTL (1h d'inactivité)
     error --> [*] : Nettoyage TTL (1h d'inactivité)
 ```
@@ -118,12 +122,14 @@ sequenceDiagram
     participant SMTP
 
     User->>Browser: Dépose PDF + (optionnel) email
-    Browser->>IndexedDB: Sauvegarde blob PDF (status: pending)
-    Browser->>API: POST /ocr/upload (PDF + email?)
-    API->>IndexedDB: INSERT task (status: pending)
-    API->>Redis: RPUSH job (task_id, pdf_path, output_dir, email)
-    API-->>Browser: 202 { task_id }
-    Browser->>IndexedDB: Met à jour id + status: processing
+    Browser->>IndexedDB: Sauvegarde blob PDF (status: pending, id: crypto.randomUUID())
+    loop Pour chaque chunk de 5 Mo
+        Browser->>API: POST /ocr/upload/chunk (task_id, chunk_index, total_chunks, chunk)
+        API-->>Browser: { chunks_received, total_chunks, assembled }
+    end
+    Note over API: Dernier chunk : assemblage PDF + enqueue RQ
+    API-->>Browser: { assembled: true }
+    Browser->>IndexedDB: Met à jour status: processing
 
     loop Polling toutes les 5s
         Browser->>API: GET /ocr/status/:id
@@ -249,7 +255,7 @@ backend/
 erDiagram
     TASKS {
         TEXT id PK
-        TEXT status "pending | processing | completed | error"
+        TEXT status "pending_upload | pending | processing | completed | error"
         TEXT pdf_path
         TEXT output_dir
         INTEGER created_at
@@ -260,6 +266,11 @@ erDiagram
         TEXT progress_label "nullable"
         TEXT email "nullable — pour notification"
     }
+    UPLOAD_CHUNKS {
+        TEXT task_id FK
+        INTEGER chunk_index
+    }
+    TASKS ||--o{ UPLOAD_CHUNKS : "reçoit"
 ```
 
 ### Nettoyage automatique (TTL)
@@ -305,7 +316,8 @@ graph LR
 
 | Endpoint | Sens | Description |
 |---|---|---|
-| `POST /ocr/upload` | → | Envoie le PDF + email optionnel, reçoit `task_id` (202) |
+| `POST /ocr/upload` | → | Upload monolithique (CLI) — PDF complet, reçoit `task_id` (202) |
+| `POST /ocr/upload/chunk` | → | Upload par chunk 5 Mo (web) — `task_id` généré côté client ; job enqueued au dernier chunk |
 | `GET /ocr/status/:id` | → | Interroge statut + position file + progression ; renouvelle le TTL |
 | `GET /ocr/result/:id` | → | Récupère markdown + blocs (409 si pas completed) |
 
@@ -365,6 +377,10 @@ backend/docker-compose.yml
 | `job_id=task_id` dans `queue.enqueue` | Déduplication naturelle lors du requeue |
 | `pending` tasks survivent au redémarrage API | Cohérence avec la philosophie "zéro perte de travail" |
 | `processing` → `error` au redémarrage | L'inférence ne peut pas reprendre à mi-chemin |
+| `pending_upload` → `error` au redémarrage | L'assemblage ne peut pas reprendre à mi-chemin |
+| `task_id` généré côté client (`crypto.randomUUID()`) | Permet de sauvegarder en IndexedDB avec l'ID définitif dès le départ — plus de double write `tempId → real_id` |
+| Chunks de 5 Mo (`CHUNK_SIZE`) | Compromis réseau/mémoire ; configurable côté client |
+| Endpoint `POST /ocr/upload` conservé | Rétrocompatibilité CLI |
 | Web Notifications API (pas Push VAPID) | Couvre le cas "autre onglet" sans HTTPS ni service worker |
 | IndexedDB (Dexie.js) pour les PDF | Blob lourd — ne pas le renvoyer au serveur à chaque refresh |
 | Polling HTTP (pas WebSocket) | Simple, compatible avec tous les proxies, suffisant pour un TTL long |

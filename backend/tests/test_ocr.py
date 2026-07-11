@@ -197,3 +197,163 @@ async def test_status_touch_refreshes_updated_at(client: AsyncClient):
 
     after = get_task(task_id)["updated_at"]
     assert after >= before
+
+
+# ---------------------------------------------------------------------------
+# Tests upload par chunks
+# ---------------------------------------------------------------------------
+
+def _make_task_id() -> str:
+    import uuid
+    return str(uuid.uuid4())
+
+
+@pytest.mark.asyncio
+async def test_chunk_upload_single_chunk(client: AsyncClient):
+    """Un PDF < 5 Mo envoyé en 1 chunk : assemblage immédiat + job enqueued."""
+    from app.main import app
+
+    task_id = _make_task_id()
+    pdf_bytes = b"%PDF-1.4 single chunk content"
+
+    data = {
+        "task_id": task_id,
+        "chunk_index": "0",
+        "total_chunks": "1",
+        "filename": "doc.pdf",
+    }
+    files = {"chunk": ("doc.pdf", io.BytesIO(pdf_bytes), "application/octet-stream")}
+
+    r = await client.post("/ocr/upload/chunk", data=data, files=files)
+    assert r.status_code == 202
+    body = r.json()
+    assert body["task_id"] == task_id
+    assert body["chunks_received"] == 1
+    assert body["total_chunks"] == 1
+    assert body["assembled"] is True
+    assert len(app.state.rq_queue.enqueued) == 1
+
+
+@pytest.mark.asyncio
+async def test_chunk_upload_multi_chunk_sequence(client: AsyncClient):
+    """Upload en 3 chunks : le job est enqueued uniquement au 3ème chunk."""
+    from app.main import app
+    from app.database import get_task
+
+    task_id = _make_task_id()
+    parts = [b"part0_data", b"part1_data", b"part2_data"]
+
+    for i, part in enumerate(parts):
+        data = {
+            "task_id": task_id,
+            "chunk_index": str(i),
+            "total_chunks": "3",
+            "filename": "big.pdf",
+        }
+        files = {"chunk": ("big.pdf", io.BytesIO(part), "application/octet-stream")}
+        r = await client.post("/ocr/upload/chunk", data=data, files=files)
+        assert r.status_code == 202
+        body = r.json()
+        assert body["chunks_received"] == i + 1
+        is_last = i == 2
+        assert body["assembled"] is is_last
+
+    # Le job ne doit être enqueued qu'une seule fois (au dernier chunk)
+    enqueued = [e for e in app.state.rq_queue.enqueued if e["args"][0] == task_id]
+    assert len(enqueued) == 1
+
+    # Le statut final est 'pending' (pas 'pending_upload')
+    row = get_task(task_id)
+    assert row["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_chunk_upload_chunk_index_out_of_range(client: AsyncClient):
+    """chunk_index hors plage [0, total_chunks-1] → 422."""
+    task_id = _make_task_id()
+    data = {
+        "task_id": task_id,
+        "chunk_index": "5",   # > total_chunks - 1 = 2
+        "total_chunks": "3",
+        "filename": "doc.pdf",
+    }
+    files = {"chunk": ("doc.pdf", io.BytesIO(b"data"), "application/octet-stream")}
+    r = await client.post("/ocr/upload/chunk", data=data, files=files)
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_chunk_upload_missing_chunk_0_first(client: AsyncClient):
+    """Envoyer chunk_index=1 sans avoir envoyé chunk_index=0 → 404."""
+    task_id = _make_task_id()
+    data = {
+        "task_id": task_id,
+        "chunk_index": "1",
+        "total_chunks": "2",
+        "filename": "doc.pdf",
+    }
+    files = {"chunk": ("doc.pdf", io.BytesIO(b"data"), "application/octet-stream")}
+    r = await client.post("/ocr/upload/chunk", data=data, files=files)
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_chunk_upload_idempotent_resend(client: AsyncClient):
+    """Re-envoyer un chunk déjà reçu est idempotent (pas d'erreur, pas de doublon en DB)."""
+    from app.database import get_received_chunks_count
+
+    task_id = _make_task_id()
+    data = {
+        "task_id": task_id,
+        "chunk_index": "0",
+        "total_chunks": "2",
+        "filename": "doc.pdf",
+    }
+    files = {"chunk": ("doc.pdf", io.BytesIO(b"data0"), "application/octet-stream")}
+
+    r1 = await client.post("/ocr/upload/chunk", data=data, files=files)
+    assert r1.status_code == 202
+
+    # Re-envoyer le même chunk
+    files = {"chunk": ("doc.pdf", io.BytesIO(b"data0"), "application/octet-stream")}
+    r2 = await client.post("/ocr/upload/chunk", data=data, files=files)
+    assert r2.status_code == 202
+
+    # Toujours 1 chunk enregistré (INSERT OR IGNORE)
+    assert get_received_chunks_count(task_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_chunk_upload_with_email(client: AsyncClient):
+    """L'email est persisté si fourni au chunk 0."""
+    from app.database import get_task
+
+    task_id = _make_task_id()
+    data = {
+        "task_id": task_id,
+        "chunk_index": "0",
+        "total_chunks": "1",
+        "filename": "doc.pdf",
+        "email": "historien@exemple.fr",
+    }
+    files = {"chunk": ("doc.pdf", io.BytesIO(b"%PDF-1.4 data"), "application/octet-stream")}
+    r = await client.post("/ocr/upload/chunk", data=data, files=files)
+    assert r.status_code == 202
+    row = get_task(task_id)
+    assert row["email"] == "historien@exemple.fr"
+
+
+@pytest.mark.asyncio
+async def test_chunk_upload_invalid_email(client: AsyncClient):
+    """Un email invalide au chunk 0 doit retourner 422."""
+    task_id = _make_task_id()
+    data = {
+        "task_id": task_id,
+        "chunk_index": "0",
+        "total_chunks": "1",
+        "filename": "doc.pdf",
+        "email": "not-an-email",
+    }
+    files = {"chunk": ("doc.pdf", io.BytesIO(b"data"), "application/octet-stream")}
+    r = await client.post("/ocr/upload/chunk", data=data, files=files)
+    assert r.status_code == 422

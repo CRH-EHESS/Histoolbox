@@ -36,9 +36,10 @@ def clean_db():
     from app import database
     database.init_db()  # recrée la table proprement
     yield
-    # Supprime toutes les tâches après le test
+    # Supprime toutes les tâches et chunks après le test
     import sqlite3
     with sqlite3.connect(database.DB_PATH) as conn:
+        conn.execute("DELETE FROM upload_chunks")
         conn.execute("DELETE FROM tasks")
         conn.commit()
 

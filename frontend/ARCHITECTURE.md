@@ -204,12 +204,40 @@ src/
 │
 ├── lib/
 │   ├── apiClient.ts         ← fetch wrapper + types partagés (TaskStatus, BlockItem…)
+│   │                           inclut uploadPdfChunked() (découpage 5 Mo)
 │   ├── blockUtils.ts        ← navigation par blocs (offsets, filtrage par page)
 │   └── exportUtils.ts       ← export .md et .docx
 │
 └── db/
     └── index.ts             ← Dexie.js + OCRProject + CRUD helpers
 ```
+
+---
+
+## Upload par chunks (Évolution A)
+
+Le flux d'upload utilise `api.uploadPdfChunked()` qui découpe le PDF en tranches de **5 Mo** (`CHUNK_SIZE = 5 * 1024 * 1024`) avant de les envoyer séquentiellement à `POST /ocr/upload/chunk`.
+
+### Protocole
+
+| Étape | Qui | Quoi |
+|-------|-----|------|
+| 1 | `OCRUploadPage` | Génère `task_id = crypto.randomUUID()` côté client |
+| 2 | `OCRUploadPage` | Sauvegarde le blob PDF en IndexedDB avec l'ID définitif |
+| 3 | `uploadPdfChunked` | Envoie N chunks séquentiellement (chunk 0 porte l'email) |
+| 4 | Backend | Écrit `chunk_<i>.bin` + registre SQLite + assemblage au dernier chunk |
+| 5 | Backend | Dernier chunk → PDF assemblé → job RQ enqueued → statut `pending` |
+| 6 | `OCRUploadPage` | Navigue vers `/ocr/waiting/:id` (1 fichier) ou `/ocr/history` (N) |
+
+**Avantage clé :** le `task_id` étant généré côté client, l'entrée IndexedDB est créée avec son ID définitif — plus de double write `tempId → real_id`.
+
+### Progression
+
+`UploadQueue` affiche une barre de progression pendant le statut `uploading` si `PendingUploadItem.uploadProgress` est défini (uniquement pour les fichiers > 5 Mo, donc > 1 chunk).
+
+### Rétrocompatibilité
+
+L'ancien endpoint `POST /ocr/upload` (upload monolithique) est conservé pour le client CLI.
 
 ---
 

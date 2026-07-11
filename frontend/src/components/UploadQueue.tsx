@@ -15,6 +15,8 @@ export interface PendingUploadItem {
   file: File;
   status: UploadItemStatus;
   errorMessage?: string;
+  /** Progression de l'upload par chunks (absent pour les petits fichiers < 5 Mo). */
+  uploadProgress?: { sent: number; total: number };
 }
 
 interface UploadQueueProps {
@@ -63,6 +65,19 @@ export function UploadQueue({ items, submitting, onRemove }: UploadQueueProps) {
             <div className="flex-1 min-w-0">
               <p className="truncate font-medium text-stone-800">{item.file.name}</p>
               <p className="text-stone-400 text-xs">{formatSize(item.file.size)}</p>
+              {item.status === "uploading" && item.uploadProgress && item.uploadProgress.total > 1 && (
+                <div className="mt-1">
+                  <div className="h-1 w-full rounded-full bg-stone-100 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-stone-500 transition-all duration-200"
+                      style={{ width: `${Math.round((item.uploadProgress.sent / item.uploadProgress.total) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-stone-400 text-xs mt-0.5">
+                    {item.uploadProgress.sent}/{item.uploadProgress.total} chunks
+                  </p>
+                </div>
+              )}
               {item.status === "error" && item.errorMessage && (
                 <p className="text-red-600 text-xs mt-0.5">{item.errorMessage}</p>
               )}

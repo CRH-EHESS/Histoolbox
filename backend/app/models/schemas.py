@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import List, Literal, Optional
 
 
-TaskStatus = Literal["pending", "processing", "completed", "error"]
+TaskStatus = Literal["pending_upload", "pending", "processing", "completed", "error"]
 
 
 class UploadResponse(BaseModel):
@@ -45,8 +45,16 @@ class ResultResponse(BaseModel):
     filename: str
     created_at: int
     completed_at: int
-    markdown: str                # Concaténation des markdown par bloc
-    blocks: List[BlockItem]      # Blocs de layout avec bbox normalisées
+    markdown: str
+    blocks: List[BlockItem]
     num_pages: int
     total_token_count: int
     pages: List[PageInfo]
+
+
+class ChunkUploadResponse(BaseModel):
+    """Réponse de l'endpoint POST /ocr/upload/chunk."""
+    task_id: str
+    chunks_received: int
+    total_chunks: int
+    assembled: bool              # True si c'était le dernier chunk (job enqueued)
