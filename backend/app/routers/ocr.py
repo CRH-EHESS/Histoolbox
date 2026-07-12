@@ -2,6 +2,7 @@
 Router OCR — endpoints :
   POST /ocr/upload               — upload monolithique (rétrocompatibilité CLI)
   POST /ocr/upload/chunk         — upload par chunks de 5 Mo (web)
+  GET  /ocr/upload/chunks/{id}   — liste des chunks déjà reçus (resume upload)
   GET  /ocr/status/{task_id}
   GET  /ocr/result/{task_id}
 """
@@ -18,14 +19,14 @@ from app.database import (
     create_task_pending_upload,
     delete_upload_chunks,
     get_queue_position,
-    get_received_chunks_count,
+    get_received_chunk_indexes,
     get_task,
-    register_chunk,
     touch_task,
+    try_finalize_assembly,
     update_task_status,
 )
 from app.limiter import limiter
-from app.models.schemas import BlockItem, ChunkUploadResponse, PageInfo, ResultResponse, StatusResponse, UploadResponse
+from app.models.schemas import BlockItem, ChunkListResponse, ChunkUploadResponse, PageInfo, ResultResponse, StatusResponse, UploadResponse
 from app.services.chandra_service import INFERENCE_TIMEOUT_SECONDS
 from app.worker import process_ocr_job
 
@@ -161,13 +162,16 @@ async def upload_chunk(
     chunk_path.write_bytes(content)
     logger.debug("[{}] Chunk {}/{} reçu | taille={}o", task_id, chunk_index + 1, total_chunks, len(content))
 
-    # Enregistrer le chunk en base (idempotent)
-    register_chunk(task_id, chunk_index)
-    chunks_received = get_received_chunks_count(task_id)
+    # Enregistrement atomique + vérification si l'assemblage doit être lancé.
+    # try_finalize_assembly utilise BEGIN IMMEDIATE pour éviter les race conditions
+    # quand plusieurs chunks arrivent simultanément.
+    should_assemble = try_finalize_assembly(task_id, chunk_index, total_chunks)
+    # Compte le nombre de chunks réellement reçus pour la réponse
+    chunks_received = len(get_received_chunk_indexes(task_id))
 
     assembled = False
-    if chunks_received == total_chunks:
-        # Assembler les chunks dans l'ordre
+    if should_assemble:
+        # Cet appelant est l'unique gagnant de la course — on assemble
         row = get_task(task_id)
         pdf_path = Path(row["pdf_path"])
         output_dir = Path(row["output_dir"])
@@ -204,6 +208,29 @@ async def upload_chunk(
         total_chunks=total_chunks,
         assembled=assembled,
     )
+
+
+@router.get("/upload/chunks/{task_id}", response_model=ChunkListResponse)
+async def get_received_chunks(task_id: str) -> ChunkListResponse:
+    """Retourne la liste des index de chunks déjà reçus par le serveur.
+
+    Utilisé par le mécanisme de recovery côté frontend : au retour sur la page
+    d'upload après une interruption, le client interroge cet endpoint pour
+    n'envoyer que les chunks manquants (reprise partielle).
+
+    - 200 + liste vide → tâche inexistante ou aucun chunk reçu (envoyer depuis chunk 0)
+    - 200 + liste partielle → reprendre depuis le premier index absent
+    - 409 → tâche dans un état incompatible (assembling/pending/completed)
+    """
+    row = get_task(task_id)
+    if row is not None and row["status"] not in ("pending_upload", "assembling"):
+        if row["status"] in ("pending", "processing", "completed", "error"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"La tâche est dans un état non-resumable : '{row['status']}'.",
+            )
+    received = get_received_chunk_indexes(task_id)
+    return ChunkListResponse(task_id=task_id, received=received, total_chunks=None)
 
 
 @router.get("/status/{task_id}", response_model=StatusResponse)

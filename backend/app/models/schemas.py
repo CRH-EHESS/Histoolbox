@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import List, Literal, Optional
 
 
-TaskStatus = Literal["pending_upload", "pending", "processing", "completed", "error"]
+TaskStatus = Literal["pending_upload", "assembling", "pending", "processing", "completed", "error"]
 
 
 class UploadResponse(BaseModel):
@@ -58,3 +58,10 @@ class ChunkUploadResponse(BaseModel):
     chunks_received: int
     total_chunks: int
     assembled: bool              # True si c'était le dernier chunk (job enqueued)
+
+
+class ChunkListResponse(BaseModel):
+    """Réponse de GET /ocr/upload/chunks/{task_id} — liste des chunks déjà reçus."""
+    task_id: str
+    received: List[int]          # index des chunks déjà enregistrés en base
+    total_chunks: Optional[int]  # None si la tâche n'existe pas encore (chunk 0 pas envoyé)

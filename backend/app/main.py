@@ -18,7 +18,7 @@ from rq import Queue
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.database import init_db, get_expired_tasks, delete_task
+from app.database import init_db, get_expired_tasks, delete_task, delete_upload_chunks
 from app.limiter import limiter
 from app.routers.ocr import OUTPUT_ROOT, UPLOAD_ROOT, router as ocr_router
 
@@ -55,7 +55,13 @@ _CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "600"))
 
 
 async def _cleanup_expired_tasks() -> None:
-    """Supprime les fichiers et l'entrée SQLite des tâches inactives depuis > CLEANUP_TTL_SECONDS."""
+    """Supprime les fichiers et l'entrée SQLite des tâches inactives depuis > CLEANUP_TTL_SECONDS.
+
+    Gère deux cas distincts :
+    - Tâches completed/error/pending : suppression de upload_dir + output_dir.
+    - Tâches pending_upload/assembling abandonnées : suppression des chunks temporaires
+      dans data/uploads/ + des entrées upload_chunks en base.
+    """
     import time
 
     cutoff = int(time.time()) - CLEANUP_TTL_SECONDS
@@ -65,12 +71,19 @@ async def _cleanup_expired_tasks() -> None:
     logger.info("Nettoyage : {} tâche(s) expirée(s) à supprimer", len(expired))
     for row in expired:
         task_id = row["id"]
-        # Suppression des répertoires (idempotent si déjà absents)
         upload_dir = Path(row["pdf_path"]).parent
-        shutil.rmtree(upload_dir, ignore_errors=True)
-        shutil.rmtree(row["output_dir"], ignore_errors=True)
+
+        if row["status"] in ("pending_upload", "assembling"):
+            # Upload abandonné : supprimer uniquement les chunks temporaires
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            delete_upload_chunks(task_id)
+        else:
+            # Tâche complète ou en erreur : supprimer les deux répertoires
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            shutil.rmtree(row["output_dir"], ignore_errors=True)
+
         delete_task(task_id)
-        logger.info("[{}] Supprimé (inactif depuis > {}s)", task_id, CLEANUP_TTL_SECONDS)
+        logger.info("[{}] Supprimé (statut={}, inactif depuis > {}s)", task_id, row["status"], CLEANUP_TTL_SECONDS)
 
 
 async def _cleanup_loop() -> None:

@@ -70,18 +70,21 @@ stateDiagram-v2
     [*] --> pending_upload : POST /ocr/upload/chunk\n(chunk 0 — web)
     [*] --> pending : POST /ocr/upload\n(monolithique — CLI)
     pending_upload --> pending_upload : Chunks suivants reçus
-    pending_upload --> pending : Dernier chunk → assemblage\n→ job enqueued
+    pending_upload --> assembling : Dernier chunk validé\n(try_finalize_assembly — CAS SQLite)
+    assembling --> pending : PDF assemblé\n→ job enqueued dans RQ
     pending --> pending : Crash Redis + redémarrage worker\n(requeue_pending_tasks)
     pending --> processing : Worker démarre l'inférence\n(BLPOP Redis)
     processing --> completed : Chandra termine ✓\n→ email envoyé si fourni
     processing --> error : Timeout / vLLM ✗\n→ email envoyé si fourni
     processing --> error : Crash serveur API\n(init_db marque processing → error)
     pending_upload --> error : Crash serveur API\n(init_db marque pending_upload → error)
+    assembling --> error : Crash serveur API\n(init_db marque assembling → error)
+    pending_upload --> error : TTL expiré (upload abandonné)\nGC supprime les chunks
     completed --> [*] : Nettoyage TTL (1h d'inactivité)
     error --> [*] : Nettoyage TTL (1h d'inactivité)
 ```
 
-**Règle clé :** les tâches `pending` survivent aux redémarrages du serveur API. Seules les tâches `processing` sont marquées `error` au redémarrage (l'inférence ne peut pas reprendre à mi-chemin). Si Redis est également redémarré, `requeue_pending_tasks()` au démarrage du worker ré-enqueue toutes les tâches `pending` trouvées en SQLite.
+**Règle clé :** les tâches `pending` survivent aux redémarrages du serveur API. Seules les tâches `processing`, `assembling` et `pending_upload` sont marquées `error` au redémarrage. Si Redis est également redémarré, `requeue_pending_tasks()` au démarrage du worker ré-enqueue toutes les tâches `pending` trouvées en SQLite.
 
 ---
 
@@ -255,7 +258,7 @@ backend/
 erDiagram
     TASKS {
         TEXT id PK
-        TEXT status "pending_upload | pending | processing | completed | error"
+        TEXT status "pending_upload | assembling | pending | processing | completed | error"
         TEXT pdf_path
         TEXT output_dir
         INTEGER created_at
@@ -279,9 +282,12 @@ erDiagram
 graph LR
     LOOP["_cleanup_loop()\ntoutes les 10 min"]
     EXP["get_expired_tasks()\nupdated_at < now - TTL"]
-    DEL["shutil.rmtree(output_dir)\n+ delete_task()"]
+    DEL_FULL["shutil.rmtree(upload_dir)\n+ shutil.rmtree(output_dir)\n+ delete_task()"]
+    DEL_GHOST["shutil.rmtree(upload_dir)\n+ delete_upload_chunks()\n+ delete_task()"]
 
-    LOOP --> EXP --> DEL
+    LOOP --> EXP
+    EXP -->|"status ∉ pending_upload, assembling"| DEL_FULL
+    EXP -->|"status = pending_upload\nou assembling\n(upload fantôme)"| DEL_GHOST
 
     TOUCH["touch_task()\nGET /status ou /result"]
     TOUCH -->|"updated_at = now\nrenouvelle le TTL"| DB["SQLite"]
@@ -309,6 +315,9 @@ graph LR
 | S10 | Email non fourni, navigateur ouvert | Notification OS via Web Notifications API |
 | S11 | SMTP non configuré | Log warning, pas d'exception (dégradé gracieux) |
 | S12 | Permission navigateur refusée | Silencieux (pas de notification) |
+| S13 | Upload interrompu à mi-chemin | `GET /ocr/upload/chunks/:id` → liste des index reçus → reprise des chunks manquants |
+| S14 | Upload abandonné (TTL expiré) | GC supprime les chunks temporaires + `pending_upload` → `error` |
+| S15 | Deux chunks "finaux" arrivent simultanément | `try_finalize_assembly` (CAS SQLite) garantit un seul assemblage |
 
 ---
 
@@ -318,6 +327,7 @@ graph LR
 |---|---|---|
 | `POST /ocr/upload` | → | Upload monolithique (CLI) — PDF complet, reçoit `task_id` (202) |
 | `POST /ocr/upload/chunk` | → | Upload par chunk 5 Mo (web) — `task_id` généré côté client ; job enqueued au dernier chunk |
+| `GET /ocr/upload/chunks/:id` | → | Liste des chunks déjà reçus — permet la reprise d'un upload interrompu |
 | `GET /ocr/status/:id` | → | Interroge statut + position file + progression ; renouvelle le TTL |
 | `GET /ocr/result/:id` | → | Récupère markdown + blocs (409 si pas completed) |
 
@@ -377,9 +387,12 @@ backend/docker-compose.yml
 | `job_id=task_id` dans `queue.enqueue` | Déduplication naturelle lors du requeue |
 | `pending` tasks survivent au redémarrage API | Cohérence avec la philosophie "zéro perte de travail" |
 | `processing` → `error` au redémarrage | L'inférence ne peut pas reprendre à mi-chemin |
-| `pending_upload` → `error` au redémarrage | L'assemblage ne peut pas reprendre à mi-chemin |
+| `pending_upload` + `assembling` → `error` au redémarrage | L'assemblage ne peut pas reprendre à mi-chemin |
 | `task_id` généré côté client (`crypto.randomUUID()`) | Permet de sauvegarder en IndexedDB avec l'ID définitif dès le départ — plus de double write `tempId → real_id` |
 | Chunks de 5 Mo (`CHUNK_SIZE`) | Compromis réseau/mémoire ; configurable côté client |
+| `try_finalize_assembly` CAS SQLite (`BEGIN IMMEDIATE` + `UPDATE WHERE status='pending_upload'`) | Garantit l'unicité de l'assemblage sans lock applicatif ni Redis |
+| `GET /ocr/upload/chunks/:id` | Permet la reprise d'un upload interrompu — le frontend ne renvoie que les chunks manquants |
+| GC différenciée `pending_upload` vs complet | Les chunks temporaires (`data/uploads/`) sont nettoyés même si `output_dir` est absent |
 | Endpoint `POST /ocr/upload` conservé | Rétrocompatibilité CLI |
 | Web Notifications API (pas Push VAPID) | Couvre le cas "autre onglet" sans HTTPS ni service worker |
 | IndexedDB (Dexie.js) pour les PDF | Blob lourd — ne pas le renvoyer au serveur à chaque refresh |

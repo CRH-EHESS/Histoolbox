@@ -49,8 +49,13 @@ export interface UploadResponse {
   task_id: string;
 }
 
-/** Réponse de POST /ocr/upload/chunk */
-export interface ChunkUploadResponse {
+/** Réponse de GET /ocr/upload/chunks/:id */
+export interface ChunkListResponse {
+  task_id: string;
+  /** Index des chunks déjà validés côté serveur. */
+  received: number[];
+  total_chunks: number | null;
+}
   task_id: string;
   chunks_received: number;
   total_chunks: number;
@@ -126,6 +131,9 @@ export const api = {
    * Le `taskId` est généré côté client avant l'appel pour permettre de
    * sauvegarder le blob dans IndexedDB avec son ID définitif dès le départ.
    *
+   * Si l'upload a été interrompu, interroge d'abord GET /ocr/upload/chunks/:id
+   * pour connaître les chunks déjà reçus et reprend à partir du premier manquant.
+   *
    * @param onProgress  Callback appelé après chaque chunk envoyé avec succès.
    *                    `sent` = nombre de chunks envoyés, `total` = total.
    */
@@ -138,7 +146,25 @@ export const api = {
     const CHUNK_SIZE = 5 * 1024 * 1024; // 5 Mo
     const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
 
+    // Consulter les chunks déjà reçus (reprise après interruption)
+    let alreadyReceived = new Set<number>();
+    try {
+      const state = await request<ChunkListResponse>(`/ocr/upload/chunks/${taskId}`);
+      alreadyReceived = new Set(state.received);
+    } catch {
+      // 404 = tâche inconnue, 409 = état non-resumable → on envoie tout depuis le début
+      alreadyReceived = new Set();
+    }
+
+    let sentCount = alreadyReceived.size;
+
     for (let i = 0; i < totalChunks; i++) {
+      if (alreadyReceived.has(i)) {
+        // Chunk déjà validé côté serveur — on saute
+        onProgress?.(++sentCount, totalChunks);
+        continue;
+      }
+
       const start = i * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, file.size);
       const slice = file.slice(start, end);
@@ -158,10 +184,15 @@ export const api = {
         body: form,
       });
 
-      onProgress?.(i + 1, totalChunks);
+      onProgress?.(++sentCount, totalChunks);
     }
 
     return { task_id: taskId };
+  },
+
+  /** Retourne les index des chunks déjà reçus par le serveur (reprise d'upload). */
+  getUploadChunks(taskId: string): Promise<ChunkListResponse> {
+    return request<ChunkListResponse>(`/ocr/upload/chunks/${taskId}`);
   },
 
   getStatus(taskId: string): Promise<StatusResponse> {

@@ -357,3 +357,124 @@ async def test_chunk_upload_invalid_email(client: AsyncClient):
     files = {"chunk": ("doc.pdf", io.BytesIO(b"data"), "application/octet-stream")}
     r = await client.post("/ocr/upload/chunk", data=data, files=files)
     assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 — GET /ocr/upload/chunks/:id (resume upload)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_chunks_unknown_task(client: AsyncClient):
+    """GET /ocr/upload/chunks sur un task_id inexistant → 200 + liste vide."""
+    r = await client.get("/ocr/upload/chunks/00000000-0000-0000-0000-000000000001")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["received"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_chunks_partial_upload(client: AsyncClient):
+    """GET /ocr/upload/chunks retourne les index déjà reçus."""
+    task_id = _make_task_id()
+
+    # Envoyer chunk 0 et chunk 2 (pas le 1)
+    for idx in (0, 2):
+        data = {"task_id": task_id, "chunk_index": str(idx), "total_chunks": "3", "filename": "doc.pdf"}
+        if idx == 0:
+            files = {"chunk": ("doc.pdf", io.BytesIO(b"data0"), "application/octet-stream")}
+            await client.post("/ocr/upload/chunk", data=data, files=files)
+        else:
+            # chunk 2 sans avoir envoyé chunk 1 — on le force directement en base
+            from app.database import register_chunk
+            register_chunk(task_id, idx)
+
+    r = await client.get(f"/ocr/upload/chunks/{task_id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert sorted(body["received"]) == [0, 2]
+
+
+@pytest.mark.asyncio
+async def test_get_chunks_non_resumable_status(client: AsyncClient):
+    """GET /ocr/upload/chunks sur une tâche completed → 409 (non-resumable)."""
+    from app.database import create_task, update_task_status
+
+    task_id = _make_task_id()
+    create_task(task_id, "/fake/doc.pdf", "/fake/out")
+    update_task_status(task_id, "completed")
+
+    r = await client.get(f"/ocr/upload/chunks/{task_id}")
+    assert r.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 — Garbage collection des uploads fantômes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_pending_upload_task(tmp_path):
+    """La boucle de nettoyage supprime les tâches pending_upload expirées."""
+    import sqlite3
+    from app.database import create_task_pending_upload, get_task, register_chunk
+    from app import database
+    from app.main import _cleanup_expired_tasks
+    from unittest.mock import patch
+
+    task_id = _make_task_id()
+    upload_dir = tmp_path / task_id
+    upload_dir.mkdir()
+    (upload_dir / "chunk_0.bin").write_bytes(b"part0")
+
+    pdf_path = upload_dir / "doc.pdf"
+    output_dir = tmp_path / "out" / task_id
+    output_dir.mkdir(parents=True)
+
+    create_task_pending_upload(task_id, str(pdf_path), str(output_dir))
+    register_chunk(task_id, 0)
+
+    # Forcer updated_at dans le passé
+    with sqlite3.connect(database.DB_PATH) as conn:
+        conn.execute("UPDATE tasks SET updated_at = 1 WHERE id = ?", (task_id,))
+        conn.commit()
+
+    with patch("app.main.CLEANUP_TTL_SECONDS", 0):
+        await _cleanup_expired_tasks()
+
+    assert get_task(task_id) is None
+    assert not (upload_dir / "chunk_0.bin").exists()
+
+
+# ---------------------------------------------------------------------------
+# Fix 3 — Atomicité (try_finalize_assembly)
+# ---------------------------------------------------------------------------
+
+def test_try_finalize_assembly_only_one_winner():
+    """try_finalize_assembly garantit qu'un seul appelant retourne True
+    quand tous les chunks arrivent simultanément."""
+    from app.database import create_task_pending_upload, try_finalize_assembly, get_task
+    import threading
+
+    task_id = _make_task_id()
+    create_task_pending_upload(task_id, "/fake/doc.pdf", "/fake/out")
+
+    winners = []
+    errors = []
+
+    def call_finalize(chunk_index):
+        try:
+            won = try_finalize_assembly(task_id, chunk_index, 3)
+            if won:
+                winners.append(chunk_index)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=call_finalize, args=(i,)) for i in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == [], f"Erreurs inattendues : {errors}"
+    assert len(winners) == 1
+    row = get_task(task_id)
+    assert row["status"] == "assembling"

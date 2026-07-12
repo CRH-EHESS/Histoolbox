@@ -97,7 +97,7 @@ def init_db() -> None:
         conn.execute(
             "UPDATE tasks SET status = 'error', "
             "error_message = 'Traitement interrompu par un redémarrage du serveur.', "
-            "updated_at = ? WHERE status IN ('processing', 'pending_upload')",
+            "updated_at = ? WHERE status IN ('processing', 'pending_upload', 'assembling')",
             (int(time.time()),),
         )
         conn.commit()
@@ -241,8 +241,62 @@ def get_received_chunks_count(task_id: str) -> int:
         return row[0] if row else 0
 
 
+def try_finalize_assembly(task_id: str, chunk_index: int, total_chunks: int) -> bool:
+    """Enregistre le chunk et, si tous les chunks sont reçus, tente d'être le seul à
+    déclencher l'assemblage.
+
+    Toute la logique tient dans une transaction SQLite unique (BEGIN IMMEDIATE) :
+      1. INSERT OR IGNORE du chunk courant.
+      2. Comptage des chunks reçus.
+      3. Si count == total, UPDATE tasks SET status='assembling' WHERE status='pending_upload'.
+         Le WHERE agit comme un CAS : un seul appelant concurrent obtient rowcount=1.
+
+    Retourne True uniquement si cet appelant est responsable de l'assemblage.
+    Les appelants concurrents retournent False (l'assemblage est déjà en cours).
+    """
+    with _connect() as conn:
+        # BEGIN IMMEDIATE : empêche toute autre écriture concurrente sur SQLite
+        # pendant toute la durée de la transaction.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO upload_chunks (task_id, chunk_index) VALUES (?, ?)",
+                (task_id, chunk_index),
+            )
+            count = conn.execute(
+                "SELECT COUNT(*) FROM upload_chunks WHERE task_id = ?", (task_id,)
+            ).fetchone()[0]
+
+            if count < total_chunks:
+                conn.commit()
+                return False
+
+            # Tous les chunks sont là : tenter d'être le seul à passer en 'assembling'
+            cursor = conn.execute(
+                "UPDATE tasks SET status = 'assembling', updated_at = ? "
+                "WHERE id = ? AND status = 'pending_upload'",
+                (int(time.time()), task_id),
+            )
+            conn.commit()
+            # rowcount == 1 → cet appelant a gagné la course
+            return cursor.rowcount == 1
+        except Exception:
+            conn.rollback()
+            raise
+
+
 def delete_upload_chunks(task_id: str) -> None:
     """Supprime les entrées upload_chunks une fois l'assemblage terminé."""
     with _connect() as conn:
         conn.execute("DELETE FROM upload_chunks WHERE task_id = ?", (task_id,))
         conn.commit()
+
+
+def get_received_chunk_indexes(task_id: str) -> list[int]:
+    """Retourne la liste triée des index de chunks déjà reçus."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT chunk_index FROM upload_chunks WHERE task_id = ? ORDER BY chunk_index",
+            (task_id,),
+        ).fetchall()
+        return [r[0] for r in rows]
