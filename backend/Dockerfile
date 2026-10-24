@@ -5,7 +5,8 @@ WORKDIR /app
 # uv pour la gestion des dépendances
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Dépendances d'abord (cache Docker optimal)
+# Dépendances d'abord (cache Docker optimal). L'environnement /app/.venv est
+# complet dès le build, sans le groupe dev : rien n'est installé au démarrage.
 COPY pyproject.toml uv.lock* ./
 RUN uv sync --frozen --no-dev
 
@@ -19,9 +20,11 @@ RUN mkdir -p data/uploads data/outputs
 
 EXPOSE 8001
 
-# Commande par défaut : API
+# Commande par défaut : API, lancée depuis le venv construit au build. Pas de
+# `uv run` : il resynchroniserait l'environnement au démarrage, groupe dev
+# compris, en téléchargeant depuis PyPI.
 # Le service rq_worker surcharge cette commande via docker-compose :
-#   command: ["uv", "run", "python", "run_worker.py"]
+#   command: ["/app/.venv/bin/python", "run_worker.py"]
 # --proxy-headers : client réel lu dans X-Forwarded-For, pour les seules IP
 # listées dans FORWARDED_ALLOW_IPS (sous-réseau Compose, voir docker-compose.yml).
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers"]
+CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers"]

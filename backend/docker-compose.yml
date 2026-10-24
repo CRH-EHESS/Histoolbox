@@ -37,7 +37,7 @@ services:
     environment:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - HISTOOLBOX_DB_PATH=${HISTOOLBOX_DB_PATH:-/app/data/tasks.db}
-    command: ["uv", "run", "python", "run_worker.py"]
+    command: ["/app/.venv/bin/python", "run_worker.py"]
     depends_on:
       - redis
       - api
