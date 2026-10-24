@@ -3,6 +3,7 @@
  *
  * - Nettoie l'intervalle au démontage du composant.
  * - À `completed` : récupère le résultat, met à jour IndexedDB, navigue vers la toolbox.
+ *   Le polling continue tant que le résultat n'a pas pu être récupéré.
  * - À `error` : met à jour IndexedDB, s'arrête et retourne le message d'erreur.
  * - Utilisé aussi par le mécanisme de recovery au démarrage de l'app.
  */
@@ -23,8 +24,28 @@ export interface PollingState {
   queuePosition: number | null;
 }
 
-/** Nombre d'erreurs réseau consécutives avant d'abandonner le polling. */
+/** Nombre de tours de polling consécutifs en échec avant d'abandonner. */
 const MAX_CONSECUTIVE_ERRORS = 3;
+
+/** Icône des notifications, sous le base path (GitHub Pages sert l'app sous /<repo>/). */
+const NOTIFICATION_ICON = `${import.meta.env.BASE_URL}icon-192.png`;
+
+/**
+ * Notification navigateur si la permission est accordée. Ne doit jamais faire
+ * échouer le polling : le constructeur lève une exception là où seul un service
+ * worker peut notifier (Chrome Android).
+ */
+function notifyCompletion(): void {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  try {
+    new Notification("Transcription terminée !", {
+      body: "Votre document est prêt.",
+      icon: NOTIFICATION_ICON,
+    });
+  } catch {
+    // Notification indisponible : l'utilisateur est de toute façon redirigé vers la toolbox.
+  }
+}
 
 export function usePolling(taskId: string | null): PollingState {
   const navigate = useNavigate();
@@ -50,7 +71,6 @@ export function usePolling(taskId: string | null): PollingState {
     if (!taskId) return;
     try {
       const { status, error_message, progress_step, progress_total, progress_label, queue_position } = await api.getStatus(taskId);
-      consecutiveErrors.current = 0; // réinitialise le compteur sur tout appel réussi
       setPollingState({
         status,
         errorMessage: error_message,
@@ -61,14 +81,8 @@ export function usePolling(taskId: string | null): PollingState {
       });
 
       if (status === "completed") {
-        stop();
-        // Notification navigateur si permission accordée
-        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-          new Notification("Transcription terminée !", {
-            body: "Votre document est prêt.",
-            icon: "/favicon.ico",
-          });
-        }
+        // Le polling ne s'arrête qu'après un getResult réussi : en cas d'échec,
+        // le tick suivant retente au lieu de laisser la page d'attente bloquée.
         const result = await api.getResult(taskId);
         await updateProject(taskId, {
           markdownContent: result.markdown,
@@ -76,14 +90,17 @@ export function usePolling(taskId: string | null): PollingState {
           blocks: result.blocks,
           pages: result.pages,
         });
+        stop();
+        notifyCompletion();
         navigate(`/ocr/toolbox/${taskId}`);
       } else if (status === "error") {
         stop();
         await updateProject(taskId, { status: "error" });
       }
+      consecutiveErrors.current = 0; // réinitialise le compteur sur tout tour réussi
     } catch {
-      // Erreur réseau : on tolère jusqu'à MAX_CONSECUTIVE_ERRORS erreurs consécutives
-      // (transitoires : coupure réseau, redémarrage du backend…).
+      // Erreur réseau (getStatus ou getResult) : on tolère jusqu'à MAX_CONSECUTIVE_ERRORS
+      // tours consécutifs en échec (transitoires : coupure réseau, redémarrage du backend…).
       // Au-delà, on arrête le polling et on surface l'erreur à l'utilisateur.
       consecutiveErrors.current += 1;
       if (consecutiveErrors.current >= MAX_CONSECUTIVE_ERRORS) {

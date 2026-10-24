@@ -103,7 +103,7 @@ backend/
 │   ├── test_database.py           # 5 tests CRUD SQLite
     └── test_chandra_service.py    # 8 tests du service Chandra (InferenceManager mocké)
 ├── data/                          # Créé automatiquement au démarrage
-│   ├── uploads/                   # PDFs reçus (uploads/<task_id>/fichier.pdf)
+│   ├── uploads/                   # PDFs reçus (uploads/<task_id>/input.pdf)
 │   └── outputs/                   # Fichiers Chandra (outputs/<task_id>/<stem>.md/.html/_metadata.json)
 ├── tasks.db                       # Base SQLite (créée automatiquement)
 ├── pytest.ini
@@ -114,7 +114,7 @@ backend/
 
 | Variable d'environnement | Valeur par défaut    | Usage                                              |
 |--------------------------|----------------------|----------------------------------------------------|
-| `HISTOOLBOX_DB_PATH`     | `./tasks.db`         | Chemin du fichier SQLite (isolation des tests)     |
+| `HISTOOLBOX_DB_PATH`     | `./tasks.db`         | Chemin du fichier SQLite (isolation des tests ; `/app/data/tasks.db` sous Docker Compose, volume partagé API / worker) |
 
 Le CORS est configuré pour autoriser `http://localhost:5173` (frontend Vite en développement).
 
@@ -123,7 +123,7 @@ Le CORS est configuré pour autoriser `http://localhost:5173` (frontend Vite en 
 Les fichiers sont organisés par `task_id` :
 
 ```
-data/uploads/<task_id>/document.pdf             ← PDF original reçu
+data/uploads/<task_id>/input.pdf                ← PDF reçu, sous un nom fixe (le nom d'origine est conservé en base)
 data/outputs/<task_id>/<stem>/<stem>.md         ← Transcription Markdown
 data/outputs/<task_id>/<stem>/<stem>.html       ← Transcription HTML
 data/outputs/<task_id>/<stem>/<stem>_metadata.json ← Métadonnées Chandra

@@ -16,6 +16,13 @@ vi.mock("../db", () => ({
   updateProject: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Navigation espionnée pour vérifier la redirection vers la toolbox
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router-dom")>()),
+  useNavigate: () => navigate,
+}));
+
 import { api } from "../lib/apiClient";
 import { updateProject } from "../db";
 
@@ -195,5 +202,82 @@ describe("usePolling", () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(result.current.queuePosition).toBe(3);
+  });
+
+  // -------------------------------------------------------------------------
+  // Passage à completed : page d'attente jamais bloquée (N4)
+  // -------------------------------------------------------------------------
+
+  const completedStatus = {
+    task_id: "task-42", status: "completed" as const,
+    error_message: null, created_at: 0, updated_at: 1,
+    progress_step: 4, progress_total: 4, progress_label: "Assemblage du document…",
+    queue_position: null,
+  };
+  const result = {
+    task_id: "task-42", filename: "doc.pdf", created_at: 0, completed_at: 1,
+    markdown: "# Résultat", blocks: [], num_pages: 1, total_token_count: 10, pages: [],
+  };
+
+  /** Laisse s'enchaîner les promesses d'un tour (getStatus → getResult → updateProject). */
+  async function flush() {
+    await act(async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+  }
+
+  it("retente getResult au tick suivant s'il échoue, puis redirige (N4)", async () => {
+    vi.mocked(api.getStatus).mockResolvedValue(completedStatus);
+    vi.mocked(api.getResult)
+      .mockRejectedValueOnce(new Error("[502] Bad Gateway"))
+      .mockResolvedValue(result);
+
+    renderHook(() => usePolling("task-42"), { wrapper });
+    await flush();
+    expect(api.getResult).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
+
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    await flush();
+    expect(api.getResult).toHaveBeenCalledTimes(2);
+    expect(updateProject).toHaveBeenCalledWith("task-42", expect.objectContaining({ status: "completed" }));
+    expect(navigate).toHaveBeenCalledWith("/ocr/toolbox/task-42");
+  });
+
+  it("redirige même si new Notification lève une exception (N4)", async () => {
+    class ThrowingNotification {
+      static permission = "granted";
+      constructor() {
+        throw new TypeError("Illegal constructor");
+      }
+    }
+    vi.stubGlobal("Notification", ThrowingNotification);
+    vi.mocked(api.getStatus).mockResolvedValue(completedStatus);
+    vi.mocked(api.getResult).mockResolvedValue(result);
+
+    renderHook(() => usePolling("task-42"), { wrapper });
+    await flush();
+
+    expect(updateProject).toHaveBeenCalledWith("task-42", expect.objectContaining({ status: "completed" }));
+    expect(navigate).toHaveBeenCalledWith("/ocr/toolbox/task-42");
+  });
+
+  it("notifie avec une icône existante, sous le base path", async () => {
+    const options: (NotificationOptions | undefined)[] = [];
+    class SpyNotification {
+      static permission = "granted";
+      constructor(...args: [string, NotificationOptions?]) {
+        options.push(args[1]);
+      }
+    }
+    vi.stubGlobal("Notification", SpyNotification);
+    vi.mocked(api.getStatus).mockResolvedValue(completedStatus);
+    vi.mocked(api.getResult).mockResolvedValue(result);
+
+    renderHook(() => usePolling("task-42"), { wrapper });
+    await flush();
+
+    expect(options).toHaveLength(1);
+    expect(options[0]?.icon).toBe(`${import.meta.env.BASE_URL}icon-192.png`);
   });
 });

@@ -67,8 +67,9 @@ def test_touch_task_updates_timestamp():
 
 
 def test_get_expired_tasks_returns_old_entries():
-    """Les tâches dont updated_at < cutoff doivent apparaître dans la liste."""
+    """Les tâches terminées dont updated_at < cutoff doivent apparaître dans la liste."""
     create_task("t-expired", "/uploads/t-expired/doc.pdf", "/outputs/t-expired")
+    update_task_status("t-expired", "completed")
     # cutoff dans le futur : la tâche est considérée comme expirée
     cutoff = int(time.time()) + 10
     expired = get_expired_tasks(cutoff)
@@ -84,6 +85,17 @@ def test_get_expired_tasks_excludes_recent():
     expired = get_expired_tasks(cutoff)
     ids = [row["id"] for row in expired]
     assert "t-recent" not in ids
+
+
+def test_get_expired_tasks_excludes_active_tasks():
+    """Les tâches pending et processing n'expirent jamais (F2, N3)."""
+    create_task("t-old-pending", "/uploads/t-op/doc.pdf", "/outputs/t-op")
+    create_task("t-old-processing", "/uploads/t-opr/doc.pdf", "/outputs/t-opr")
+    update_task_status("t-old-processing", "processing")
+    cutoff = int(time.time()) + 10
+    ids = [row["id"] for row in get_expired_tasks(cutoff)]
+    assert "t-old-pending" not in ids
+    assert "t-old-processing" not in ids
 
 
 def test_delete_task_removes_entry():

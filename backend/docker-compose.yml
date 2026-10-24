@@ -13,6 +13,15 @@ services:
       # Dans Docker Compose, Redis est accessible via le nom de service "redis".
       # Cette valeur peut être surchargée dans .env si besoin.
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      # Base SQLite dans le volume ./data : partagée avec rq_worker et
+      # conservée quand le conteneur est recréé.
+      - HISTOOLBOX_DB_PATH=${HISTOOLBOX_DB_PATH:-/app/data/tasks.db}
+      # En production, l'API refuse de démarrer si API_KEY est vide ou vaut « changeme ».
+      - HISTOOLBOX_ENV=${HISTOOLBOX_ENV:-production}
+      # uvicorn ne lit X-Forwarded-For que pour les IP de confiance : celles du
+      # sous-réseau Compose, où se trouve Caddy. Sans cela, toutes les requêtes
+      # semblent venir de Caddy et la limite d'upload devient globale.
+      - FORWARDED_ALLOW_IPS=${HISTOOLBOX_SUBNET:-172.30.0.0/24}
     depends_on:
       - redis
     volumes:
@@ -27,7 +36,8 @@ services:
     env_file: .env
     environment:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-    command: ["uv", "run", "python", "run_worker.py"]
+      - HISTOOLBOX_DB_PATH=${HISTOOLBOX_DB_PATH:-/app/data/tasks.db}
+    command: ["/app/.venv/bin/python", "run_worker.py"]
     depends_on:
       - redis
       - api
@@ -47,6 +57,14 @@ services:
       - caddy_config:/config
     depends_on:
       - api
+
+networks:
+  # Sous-réseau fixe, repris par FORWARDED_ALLOW_IPS (service api). À changer
+  # via HISTOOLBOX_SUBNET s'il chevauche un réseau existant de l'hôte.
+  default:
+    ipam:
+      config:
+        - subnet: ${HISTOOLBOX_SUBNET:-172.30.0.0/24}
 
 volumes:
   redis_data:

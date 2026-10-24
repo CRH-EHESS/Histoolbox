@@ -73,8 +73,8 @@ stateDiagram-v2
     processing --> completed : Chandra termine ✓\n→ email envoyé si fourni
     processing --> error : Timeout / vLLM ✗\n→ email envoyé si fourni
     processing --> error : Crash serveur API\n(init_db marque processing → error)
-    completed --> [*] : Nettoyage TTL (1h d'inactivité)
-    error --> [*] : Nettoyage TTL (1h d'inactivité)
+    completed --> [*] : Nettoyage TTL (24 h sans consultation)
+    error --> [*] : Nettoyage TTL (24 h sans consultation)
 ```
 
 **Règle clé :** les tâches `pending` survivent aux redémarrages du serveur API. Seules les tâches `processing` sont marquées `error` au redémarrage (l'inférence ne peut pas reprendre à mi-chemin). Si Redis est également redémarré, `requeue_pending_tasks()` au démarrage du worker ré-enqueue toutes les tâches `pending` trouvées en SQLite.
@@ -213,7 +213,7 @@ graph LR
     DB["SQLite\ntasks.db"]
     FS["data/outputs/"]
 
-    API -->|"queue.enqueue(job_id=task_id)"| RD
+    API -->|"enqueue_ocr()\n(job_id=task_id, job_timeout)"| RD
     RD -->|"BLPOP"| WK
     WK -->|"UPDATE status/progress"| DB
     WK -->|"écrit résultats"| FS
@@ -259,6 +259,7 @@ erDiagram
         INTEGER progress_total "4 (nullable)"
         TEXT progress_label "nullable"
         TEXT email "nullable — pour notification"
+        TEXT filename "nullable — nom d'origine assaini"
     }
 ```
 
@@ -267,7 +268,7 @@ erDiagram
 ```mermaid
 graph LR
     LOOP["_cleanup_loop()\ntoutes les 10 min"]
-    EXP["get_expired_tasks()\nupdated_at < now - TTL"]
+    EXP["get_expired_tasks()\ncompleted ou error\nupdated_at < now - TTL"]
     DEL["shutil.rmtree(output_dir)\n+ delete_task()"]
 
     LOOP --> EXP --> DEL
@@ -276,7 +277,7 @@ graph LR
     TOUCH -->|"updated_at = now\nrenouvelle le TTL"| DB["SQLite"]
 ```
 
-- `CLEANUP_TTL_SECONDS` (défaut : `3600`) — inactivité avant suppression
+- `CLEANUP_TTL_SECONDS` (défaut : `86400`) — conservation d'une tâche terminée sans consultation ; les tâches `pending` et `processing` ne sont jamais supprimées
 - `CLEANUP_INTERVAL_SECONDS` (défaut : `600`) — fréquence de la boucle
 - Toute lecture (`/status`, `/result`) renouvelle le TTL
 
@@ -350,8 +351,9 @@ backend/docker-compose.yml
 | `APP_BASE_URL` | `http://localhost:5173` | URL de base pour les liens dans les emails |
 | `VLLM_BASE_URL` | `http://localhost:8000` | URL du service vLLM |
 | `CHANDRA_INFERENCE_TIMEOUT` | `14400` | Timeout inférence (4h) |
-| `CLEANUP_TTL_SECONDS` | `3600` | TTL inactivité avant suppression |
-| `API_KEY` | `` (désactivé) | Clé d'accès partagée |
+| `CLEANUP_TTL_SECONDS` | `86400` | Conservation d'une tâche terminée sans consultation (24 h) |
+| `API_KEY` | `` (désactivé) | Clé d'accès partagée ; obligatoire en production (ni vide ni `changeme`) |
+| `HISTOOLBOX_ENV` | `development` | `production` sous Docker Compose : refus de démarrer sans vraie `API_KEY` |
 
 ---
 
@@ -362,7 +364,7 @@ backend/docker-compose.yml
 | RQ + Redis (pas Celery, pas asyncio.Queue) | API simple, worker en 1 commande, survie aux redémarrages, scaling futur |
 | `smtplib` stdlib (pas aiosmtplib) | Worker RQ est synchrone, zéro dépendance ajoutée |
 | `fakeredis` pour les tests | Intègre le round-trip RQ sans Redis réel en CI |
-| `job_id=task_id` dans `queue.enqueue` | Déduplication naturelle lors du requeue |
+| `enqueue_ocr()` pour l'upload et le requeue | `job_id=task_id` déduplique les jobs ; `job_timeout` s'applique aussi aux jobs ré-enfilés |
 | `pending` tasks survivent au redémarrage API | Cohérence avec la philosophie "zéro perte de travail" |
 | `processing` → `error` au redémarrage | L'inférence ne peut pas reprendre à mi-chemin |
 | Web Notifications API (pas Push VAPID) | Couvre le cas "autre onglet" sans HTTPS ni service worker |

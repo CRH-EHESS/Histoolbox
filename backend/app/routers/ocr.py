@@ -6,6 +6,7 @@ Router OCR — endpoints :
 """
 
 import json
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -15,19 +16,26 @@ from loguru import logger
 from app.database import create_task, get_queue_position, get_task, touch_task
 from app.limiter import limiter
 from app.models.schemas import BlockItem, PageInfo, ResultResponse, StatusResponse, UploadResponse
-from app.services.chandra_service import INFERENCE_TIMEOUT_SECONDS
-from app.worker import process_ocr_job
-
-# Timeout RQ = timeout Chandra + 5 min de marge pour la finalisation du job.
-# Sans ça, RQ tue le work-horse après 180s (défaut), bien avant la fin d'une
-# inférence longue.
-_RQ_JOB_TIMEOUT = INFERENCE_TIMEOUT_SECONDS + 300
+from app.worker import enqueue_ocr
 
 router = APIRouter(prefix="/ocr", tags=["OCR"])
 
 # Répertoires de stockage (créés au démarrage par main.py)
 UPLOAD_ROOT = Path(__file__).parent.parent.parent / "data" / "uploads"
 OUTPUT_ROOT = Path(__file__).parent.parent.parent / "data" / "outputs"
+
+
+def _sanitize_filename(filename: str | None) -> str:
+    """Réduit le nom d'origine à son dernier composant, sans caractères de contrôle.
+
+    Ce nom n'est conservé qu'en base (affichage, email) : le PDF est toujours
+    écrit sous le nom fixe input.pdf, ce qui neutralise le path traversal (S1).
+    """
+    name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(c for c in name if unicodedata.category(c)[0] != "C").strip()
+    if name in ("", ".", ".."):
+        return "document.pdf"
+    return name[:255]
 
 
 @router.post("/upload", response_model=UploadResponse, status_code=202)
@@ -46,12 +54,14 @@ async def upload_pdf(
         raise HTTPException(status_code=422, detail="Adresse email invalide.")
 
     task_id = str(uuid.uuid4())
-    logger.info("[{}] Upload reçu | filename={} | email={}", task_id, file.filename, bool(normalized_email))
+    filename = _sanitize_filename(file.filename)
+    logger.info("[{}] Upload reçu | filename={} | email={}", task_id, filename, bool(normalized_email))
 
-    # Sauvegarde du PDF
+    # Sauvegarde du PDF sous un nom fixe : le nom fourni par le client
+    # n'entre jamais dans un chemin du serveur.
     task_upload_dir = UPLOAD_ROOT / task_id
     task_upload_dir.mkdir(parents=True, exist_ok=True)
-    pdf_path = task_upload_dir / (file.filename or "input.pdf")
+    pdf_path = task_upload_dir / "input.pdf"
     content = await file.read()
     pdf_path.write_bytes(content)
     logger.debug("[{}] PDF sauvegardé | taille={}o", task_id, len(content))
@@ -61,21 +71,13 @@ async def upload_pdf(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Persistance SQLite
-    create_task(task_id, str(pdf_path), str(output_dir), email=normalized_email)
+    create_task(task_id, str(pdf_path), str(output_dir), email=normalized_email, filename=filename)
 
     # Enqueue dans la queue RQ
     queue = request.app.state.rq_queue
     if queue is None:
         raise HTTPException(status_code=503, detail="File de traitement indisponible (Redis non connecté).")
-    queue.enqueue(
-        process_ocr_job,
-        task_id,
-        str(pdf_path),
-        str(output_dir),
-        normalized_email,
-        job_id=task_id,
-        job_timeout=_RQ_JOB_TIMEOUT,
-    )
+    enqueue_ocr(queue, task_id, str(pdf_path), str(output_dir), normalized_email)
     logger.info("[{}] Job enqueueé dans la queue RQ 'ocr'", task_id)
 
     return UploadResponse(task_id=task_id)
@@ -112,7 +114,8 @@ async def get_result(task_id: str) -> ResultResponse:
 
     # Chandra crée un sous-répertoire output_dir/<stem>/ pour chaque fichier traité
     pdf_stem = Path(row["pdf_path"]).stem
-    filename = Path(row["pdf_path"]).name
+    # Repli sur le nom du fichier pour les tâches antérieures à la colonne filename
+    filename = row["filename"] or Path(row["pdf_path"]).name
     chandra_dir = Path(row["output_dir"]) / pdf_stem
 
     md_file = chandra_dir / f"{pdf_stem}.md"

@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.database import create_task, get_task
-from app.worker import process_ocr_job, requeue_pending_tasks
+from app.worker import RQ_JOB_TIMEOUT, process_ocr_job, requeue_pending_tasks
 
 
 def test_process_ocr_job_success(tmp_path):
@@ -54,6 +54,26 @@ def test_process_ocr_job_error(tmp_path):
     assert not upload_dir.exists()
 
 
+def test_process_ocr_job_uses_original_filename_in_email(tmp_path):
+    """L'email reprend le nom d'origine conservé en base, pas input.pdf (S1)."""
+    task_id = "worker-filename"
+    upload_dir = tmp_path / "uploads" / task_id
+    upload_dir.mkdir(parents=True)
+    pdf_path = upload_dir / "input.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+    output_dir = tmp_path / "outputs" / task_id
+
+    create_task(task_id, str(pdf_path), str(output_dir), email="user@example.com", filename="Registre 1789.pdf")
+
+    with (
+        patch("app.worker.run_chandra_sync", return_value={}),
+        patch("app.worker.send_notification_email") as mail_mock,
+    ):
+        process_ocr_job(task_id, str(pdf_path), str(output_dir), "user@example.com")
+
+    assert mail_mock.call_args.kwargs["filename"] == "Registre 1789.pdf"
+
+
 def test_requeue_pending_tasks():
     create_task("rq-1", "/uploads/rq1/doc.pdf", "/outputs/rq1", email="a@example.com")
     create_task("rq-2", "/uploads/rq2/doc.pdf", "/outputs/rq2", email="b@example.com")
@@ -75,3 +95,5 @@ def test_requeue_pending_tasks():
     _func, args, kwargs = queue.jobs[0]
     assert args[0] == "rq-1"
     assert kwargs["job_id"] == "rq-1"
+    # Sans job_timeout, RQ tuerait le job ré-enfilé au bout de 180 s (F4)
+    assert kwargs["job_timeout"] == RQ_JOB_TIMEOUT

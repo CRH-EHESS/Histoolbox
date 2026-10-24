@@ -25,8 +25,23 @@ from app.routers.ocr import OUTPUT_ROOT, UPLOAD_ROOT, router as ocr_router
 # --------------------------------------------------------------------------- #
 # Authentification par clé API (header X-API-Key)                             #
 # Si API_KEY n'est pas défini (dev local), la vérification est ignorée.       #
+# En production (HISTOOLBOX_ENV=production, fixé par docker-compose.yml),     #
+# l'API refuse de démarrer sans clé ou avec la valeur d'exemple.              #
 # --------------------------------------------------------------------------- #
 API_KEY = os.getenv("API_KEY", "")
+HISTOOLBOX_ENV = os.getenv("HISTOOLBOX_ENV", "development")
+_PLACEHOLDER_API_KEYS = ("", "changeme")
+
+
+def _check_api_key() -> None:
+    """Refuse de démarrer en production sans vraie clé ; signale l'authentification désactivée."""
+    if HISTOOLBOX_ENV == "production" and API_KEY in _PLACEHOLDER_API_KEYS:
+        raise RuntimeError(
+            "API_KEY vide ou égale à « changeme » : démarrage refusé en production "
+            "(générer une clé : openssl rand -hex 32)."
+        )
+    if not API_KEY:
+        logger.warning("API_KEY non définie : authentification désactivée (HISTOOLBOX_ENV={})", HISTOOLBOX_ENV)
 
 # --------------------------------------------------------------------------- #
 # Logging — contrôlé par la variable d'environnement LOG_LEVEL (défaut: INFO) #
@@ -47,15 +62,17 @@ logger.add(
 )
 
 
-# Durée d'inactivité (en secondes) avant suppression automatique des fichiers d'une tâche.
-# Contrôlé par la variable CLEANUP_TTL_SECONDS (défaut : 3600 = 1 heure).
-CLEANUP_TTL_SECONDS = int(os.getenv("CLEANUP_TTL_SECONDS", "3600"))
+# Délai de conservation (en secondes) d'une tâche terminée (completed ou error) après
+# sa dernière consultation ; les tâches en attente ou en cours ne sont jamais supprimées.
+# Contrôlé par la variable CLEANUP_TTL_SECONDS (défaut : 86400 = 24 heures, en attendant
+# la durée fixée par l'ADR 0002).
+CLEANUP_TTL_SECONDS = int(os.getenv("CLEANUP_TTL_SECONDS", "86400"))
 # Intervalle entre deux passes de nettoyage (10 minutes).
 _CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "600"))
 
 
 async def _cleanup_expired_tasks() -> None:
-    """Supprime les fichiers et l'entrée SQLite des tâches inactives depuis > CLEANUP_TTL_SECONDS."""
+    """Supprime les fichiers et l'entrée SQLite des tâches terminées inactives depuis > CLEANUP_TTL_SECONDS."""
     import time
 
     cutoff = int(time.time()) - CLEANUP_TTL_SECONDS
@@ -86,6 +103,7 @@ async def _cleanup_loop() -> None:
 
 async def lifespan(app: FastAPI):
     # Initialisation au démarrage
+    _check_api_key()
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     init_db()  # crée la table + corrige les tâches bloquées

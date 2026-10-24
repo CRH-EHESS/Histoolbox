@@ -96,7 +96,7 @@ La colonne « Dépend de » liste les branches à fusionner avant ; « — » si
 
 | N° | Branche | Sprint | Constats traités | Dépend de | Statut |
 |---|---|---|---|---|---|
-| 3.0 | `fix/3.0-correctifs-immediats` | S0 | F1, S1, S2, F2 (+ conservation¹), N3, F4, F3, N6, S4, N4 (+ icône¹), N8 | — | à faire |
+| 3.0 | `fix/3.0-correctifs-immediats` | S0 | F1, S1, S2, F2 (+ conservation¹), N3, F4, F3, N6, S4, N4 (+ icône¹), N8 | — | fusionnée (#3) |
 | 3.1.1 | `feat/3.1.1-persistance-etat` | S1 | F1, F5 | — | à faire |
 | 3.1.2 | `feat/3.1.2-machine-etats-worker` | S1 | F2, F3, F4 | 3.1.1 | à faire |
 | 3.1.3 | `feat/3.1.3-resilience-vllm` | S2 | N2 | 3.1.4 | à faire |
@@ -289,7 +289,7 @@ Pour les constats sans reproduction (F5 par exemple : redémarrer l'API pendant 
 
 ### 5.2 Critères de sortie
 
-Chaque fin de sprint vérifie le critère de sortie correspondant (§5 de l'audit). Chaque branche citée rappelle dans sa description la partie du critère qu'elle fait avancer.
+Chaque fin de sprint vérifie le critère de sortie correspondant (§5 de l'audit). Chaque branche citée rappelle dans sa description la partie du critère qu'elle fait avancer. Le résultat de cette vérification de fin de sprint (réalisations, critères de sortie, reproductions rejouées) est consigné, une fois par sprint, dans [docs/SUIVI-SPRINTS.md](SUIVI-SPRINTS.md).
 
 | Sprint | Critère de sortie (§5 de l'audit) | Branches |
 |---|---|---|

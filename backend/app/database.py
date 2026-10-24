@@ -13,7 +13,8 @@ Table :
         progress_step   INTEGER,
         progress_total  INTEGER,
         progress_label  TEXT,
-        email           TEXT            -- adresse pour notification (nullable)
+        email           TEXT,           -- adresse pour notification (nullable)
+        filename        TEXT            -- nom d'origine assaini, affichage et email (nullable)
     )
 """
 
@@ -60,6 +61,7 @@ def init_db() -> None:
             ("progress_total", "INTEGER"),
             ("progress_label", "TEXT"),
             ("email",          "TEXT"),
+            ("filename",       "TEXT"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {definition}")
@@ -78,14 +80,18 @@ def init_db() -> None:
 
 
 def create_task(
-    task_id: str, pdf_path: str, output_dir: str, email: Optional[str] = None
+    task_id: str,
+    pdf_path: str,
+    output_dir: str,
+    email: Optional[str] = None,
+    filename: Optional[str] = None,
 ) -> None:
     now = int(time.time())
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO tasks (id, status, pdf_path, output_dir, created_at, updated_at, email) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (task_id, "pending", pdf_path, output_dir, now, now, email),
+            "INSERT INTO tasks (id, status, pdf_path, output_dir, created_at, updated_at, email, filename) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, "pending", pdf_path, output_dir, now, now, email, filename),
         )
         conn.commit()
 
@@ -164,10 +170,15 @@ def get_pending_tasks() -> list:
 
 
 def get_expired_tasks(cutoff: int) -> list:
-    """Retourne les tâches dont updated_at est antérieur à cutoff (timestamp Unix)."""
+    """Retourne les tâches terminées dont updated_at est antérieur à cutoff (timestamp Unix).
+
+    Les tâches pending et processing n'expirent jamais : updated_at n'avance pas
+    pendant l'inférence, qui peut durer des heures.
+    """
     with _connect() as conn:
         return conn.execute(
-            "SELECT * FROM tasks WHERE updated_at < ?", (cutoff,)
+            "SELECT * FROM tasks WHERE status IN ('completed', 'error') AND updated_at < ?",
+            (cutoff,),
         ).fetchall()
 
 

@@ -33,7 +33,8 @@ async def test_upload_returns_task_id(client: AsyncClient):
     assert "task_id" in body
     assert len(body["task_id"]) == 36  # format UUID
     assert len(app.state.rq_queue.enqueued) == 1
-    assert app.state.rq_queue.enqueued[0]["job_timeout"] > 180
+    from app.worker import RQ_JOB_TIMEOUT
+    assert app.state.rq_queue.enqueued[0]["job_timeout"] == RQ_JOB_TIMEOUT
 
 
 @pytest.mark.asyncio
@@ -98,10 +99,10 @@ async def test_result_completed(client: AsyncClient, tmp_path):
     task_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     output_dir = tmp_path / task_id
     output_dir.mkdir()
-    chandra_subdir = output_dir / "doc"
+    chandra_subdir = output_dir / "input"
     chandra_subdir.mkdir()
 
-    (chandra_subdir / "doc.md").write_text("# Transcription")
+    (chandra_subdir / "input.md").write_text("# Transcription")
     blocks_data = [
         {
             "id": "0_0", "page": 0, "block_index": 0,
@@ -109,18 +110,18 @@ async def test_result_completed(client: AsyncClient, tmp_path):
             "markdown": "# Transcription",
         }
     ]
-    (chandra_subdir / "doc_blocks.json").write_text(json.dumps(blocks_data))
+    (chandra_subdir / "input_blocks.json").write_text(json.dumps(blocks_data))
     meta_data = {
         "num_pages": 1,
         "total_token_count": 120,
         "pages": [{"page_num": 0, "page_box": [0, 0, 1024, 1408], "token_count": 120, "num_blocks": 1}],
     }
-    (chandra_subdir / "doc_metadata.json").write_text(json.dumps(meta_data))
+    (chandra_subdir / "input_metadata.json").write_text(json.dumps(meta_data))
 
-    pdf_path = tmp_path / "doc.pdf"
+    pdf_path = tmp_path / "input.pdf"
     pdf_path.write_bytes(b"fake")
 
-    create_task(task_id, str(pdf_path), str(output_dir))
+    create_task(task_id, str(pdf_path), str(output_dir), filename="doc.pdf")
     update_task_status(task_id, "completed")
 
     r = await client.get(f"/ocr/result/{task_id}")
@@ -197,3 +198,53 @@ async def test_status_touch_refreshes_updated_at(client: AsyncClient):
 
     after = get_task(task_id)["updated_at"]
     assert after >= before
+
+
+# ---------------------------------------------------------------------------
+# Path traversal à l'upload (S1)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["relative", "absolute"])
+async def test_upload_neutralizes_path_traversal(client: AsyncClient, tmp_path, monkeypatch, kind):
+    """Le nom fourni par le client n'entre jamais dans le chemin du PDF (S1)."""
+    from app.database import get_task
+    from app.routers import ocr
+
+    upload_root = tmp_path / "uploads"
+    monkeypatch.setattr(ocr, "UPLOAD_ROOT", upload_root)
+    monkeypatch.setattr(ocr, "OUTPUT_ROOT", tmp_path / "outputs")
+    outside = tmp_path / "pwn.pdf"
+    filename = "../pwn.pdf" if kind == "relative" else str(outside)
+
+    files = {"file": (filename, io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")}
+    r = await client.post("/ocr/upload", files=files)
+
+    assert r.status_code == 202
+    task_id = r.json()["task_id"]
+    expected = upload_root / task_id / "input.pdf"
+    assert expected.read_bytes() == b"%PDF-1.4 fake"
+    assert not outside.exists()
+    assert [p.name for p in upload_root.iterdir()] == [task_id]
+    row = get_task(task_id)
+    assert row["pdf_path"] == str(expected)
+    assert row["filename"] == "pwn.pdf"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Registre 1789.pdf", "Registre 1789.pdf"),
+        ("../x.pdf", "x.pdf"),
+        ("/app/data/pwn.pdf", "pwn.pdf"),
+        ("..\\..\\x.pdf", "x.pdf"),
+        ("a\x00b\n\u202e.pdf", "ab.pdf"),
+        ("..", "document.pdf"),
+        ("", "document.pdf"),
+        (None, "document.pdf"),
+        ("x" * 300 + ".pdf", "x" * 255),
+    ],
+)
+def test_sanitize_filename(raw, expected):
+    from app.routers.ocr import _sanitize_filename
+    assert _sanitize_filename(raw) == expected
