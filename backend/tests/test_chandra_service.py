@@ -180,6 +180,29 @@ def test_check_vllm_unavailable_raises():
 
 
 # ---------------------------------------------------------------------------
+# Retries tenacity
+# ---------------------------------------------------------------------------
+
+def test_chandra_with_retry_does_not_retry_rq_timeout():
+    """Le timeout RQ (JobTimeoutException) n'est pas relancé par tenacity (F3)."""
+    from rq.timeouts import JobTimeoutException
+    from app.services import chandra_service
+
+    with (
+        patch.object(chandra_service, "_check_vllm_available"),
+        patch.object(chandra_service, "load_file", return_value=[MagicMock()]),
+        patch.object(
+            chandra_service._manager, "generate", side_effect=JobTimeoutException("timeout")
+        ) as generate,
+        patch.object(chandra_service._chandra_with_retry.retry, "sleep", lambda _: None),
+    ):
+        with pytest.raises(JobTimeoutException):
+            chandra_service._chandra_with_retry("doc.pdf")
+
+    generate.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # _assemble_and_persist
 # ---------------------------------------------------------------------------
 

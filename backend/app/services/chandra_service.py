@@ -20,6 +20,7 @@ from typing import Callable, List, Optional
 
 import httpx
 from loguru import logger
+from rq.timeouts import BaseTimeoutException
 from tenacity import (
     RetryCallState,
     retry,
@@ -100,7 +101,9 @@ def _check_vllm_available() -> None:
 @retry(
     stop=stop_after_attempt(_MAX_ATTEMPTS),
     wait=wait_exponential(multiplier=2, min=10, max=120),
-    retry=retry_if_not_exception_type(ChandraVllmUnavailableError),
+    # Pas de retry sur le timeout RQ (JobTimeoutException, levée par SIGALRM) : le
+    # relancer empêcherait le job de se terminer avant que RQ tue le work-horse.
+    retry=retry_if_not_exception_type((ChandraVllmUnavailableError, BaseTimeoutException)),
     before_sleep=_log_retry,
     reraise=True,
 )
@@ -111,7 +114,8 @@ def _chandra_with_retry(
     """
     Pre-flight vLLM + chargement du PDF + inférence avec retry automatique.
     Retourne la liste des BatchOutputItem (un par page).
-    Ne réessaie PAS si ChandraVllmUnavailableError (vLLM absent = inutile d'attendre).
+    Ne réessaie PAS si ChandraVllmUnavailableError (vLLM absent = inutile d'attendre),
+    ni sur un timeout RQ (BaseTimeoutException).
 
     on_progress(label, step, total) : callback optionnel appelé à chaque étape clé.
     """
