@@ -17,6 +17,7 @@ from loguru import logger
 
 from app.database import (
     get_pending_tasks,
+    get_task,
     update_task_error,
     update_task_status,
 )
@@ -39,7 +40,9 @@ def process_ocr_job(
     - Envoie un email de notification si l'adresse est fournie.
     - Supprime le répertoire upload dans tous les cas (finally).
     """
-    filename = Path(pdf_path).name
+    # Nom d'origine conservé en base (le PDF est stocké sous le nom fixe input.pdf)
+    row = get_task(task_id)
+    filename = (row and row["filename"]) or Path(pdf_path).name
     logger.info("[{}] Démarrage traitement | pdf={}", task_id, pdf_path)
     update_task_status(task_id, "processing")
     t0 = time.monotonic()

@@ -13,7 +13,8 @@ Table :
         progress_step   INTEGER,
         progress_total  INTEGER,
         progress_label  TEXT,
-        email           TEXT            -- adresse pour notification (nullable)
+        email           TEXT,           -- adresse pour notification (nullable)
+        filename        TEXT            -- nom d'origine assaini, affichage et email (nullable)
     )
 """
 
@@ -60,6 +61,7 @@ def init_db() -> None:
             ("progress_total", "INTEGER"),
             ("progress_label", "TEXT"),
             ("email",          "TEXT"),
+            ("filename",       "TEXT"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {definition}")
@@ -78,14 +80,18 @@ def init_db() -> None:
 
 
 def create_task(
-    task_id: str, pdf_path: str, output_dir: str, email: Optional[str] = None
+    task_id: str,
+    pdf_path: str,
+    output_dir: str,
+    email: Optional[str] = None,
+    filename: Optional[str] = None,
 ) -> None:
     now = int(time.time())
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO tasks (id, status, pdf_path, output_dir, created_at, updated_at, email) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (task_id, "pending", pdf_path, output_dir, now, now, email),
+            "INSERT INTO tasks (id, status, pdf_path, output_dir, created_at, updated_at, email, filename) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, "pending", pdf_path, output_dir, now, now, email, filename),
         )
         conn.commit()
 

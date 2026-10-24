@@ -259,6 +259,7 @@ erDiagram
         INTEGER progress_total "4 (nullable)"
         TEXT progress_label "nullable"
         TEXT email "nullable — pour notification"
+        TEXT filename "nullable — nom d'origine assaini"
     }
 ```
 
