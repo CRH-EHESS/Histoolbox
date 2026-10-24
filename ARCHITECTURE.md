@@ -352,7 +352,8 @@ backend/docker-compose.yml
 | `VLLM_BASE_URL` | `http://localhost:8000` | URL du service vLLM |
 | `CHANDRA_INFERENCE_TIMEOUT` | `14400` | Timeout inférence (4h) |
 | `CLEANUP_TTL_SECONDS` | `86400` | Conservation d'une tâche terminée sans consultation (24 h) |
-| `API_KEY` | `` (désactivé) | Clé d'accès partagée |
+| `API_KEY` | `` (désactivé) | Clé d'accès partagée ; obligatoire en production (ni vide ni `changeme`) |
+| `HISTOOLBOX_ENV` | `development` | `production` sous Docker Compose : refus de démarrer sans vraie `API_KEY` |
 
 ---
 

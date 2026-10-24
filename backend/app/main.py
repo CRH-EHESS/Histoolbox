@@ -25,8 +25,23 @@ from app.routers.ocr import OUTPUT_ROOT, UPLOAD_ROOT, router as ocr_router
 # --------------------------------------------------------------------------- #
 # Authentification par clé API (header X-API-Key)                             #
 # Si API_KEY n'est pas défini (dev local), la vérification est ignorée.       #
+# En production (HISTOOLBOX_ENV=production, fixé par docker-compose.yml),     #
+# l'API refuse de démarrer sans clé ou avec la valeur d'exemple.              #
 # --------------------------------------------------------------------------- #
 API_KEY = os.getenv("API_KEY", "")
+HISTOOLBOX_ENV = os.getenv("HISTOOLBOX_ENV", "development")
+_PLACEHOLDER_API_KEYS = ("", "changeme")
+
+
+def _check_api_key() -> None:
+    """Refuse de démarrer en production sans vraie clé ; signale l'authentification désactivée."""
+    if HISTOOLBOX_ENV == "production" and API_KEY in _PLACEHOLDER_API_KEYS:
+        raise RuntimeError(
+            "API_KEY vide ou égale à « changeme » : démarrage refusé en production "
+            "(générer une clé : openssl rand -hex 32)."
+        )
+    if not API_KEY:
+        logger.warning("API_KEY non définie : authentification désactivée (HISTOOLBOX_ENV={})", HISTOOLBOX_ENV)
 
 # --------------------------------------------------------------------------- #
 # Logging — contrôlé par la variable d'environnement LOG_LEVEL (défaut: INFO) #
@@ -88,6 +103,7 @@ async def _cleanup_loop() -> None:
 
 async def lifespan(app: FastAPI):
     # Initialisation au démarrage
+    _check_api_key()
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     init_db()  # crée la table + corrige les tâches bloquées

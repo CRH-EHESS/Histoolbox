@@ -1,4 +1,4 @@
-"""Tests de app.main — boucle de nettoyage."""
+"""Tests de app.main — boucle de nettoyage, vérification de la clé d'API au démarrage."""
 
 import pytest
 
@@ -29,3 +29,27 @@ async def test_cleanup_only_removes_finished_tasks(tmp_path, monkeypatch):
     for status in ("completed", "error"):
         assert get_task(status) is None
         assert not any(d.exists() for d in dirs[status])
+
+
+# ---------------------------------------------------------------------------
+# Clé d'API au démarrage (N6)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("key", ["", "changeme"])
+def test_check_api_key_refuses_placeholder_in_production(monkeypatch, key):
+    monkeypatch.setattr(main, "HISTOOLBOX_ENV", "production")
+    monkeypatch.setattr(main, "API_KEY", key)
+    with pytest.raises(RuntimeError, match="API_KEY"):
+        main._check_api_key()
+
+
+def test_check_api_key_accepts_real_key_in_production(monkeypatch):
+    monkeypatch.setattr(main, "HISTOOLBOX_ENV", "production")
+    monkeypatch.setattr(main, "API_KEY", "3f9c2a7e5b1d4c8a")
+    main._check_api_key()
+
+
+def test_check_api_key_allows_empty_key_in_development(monkeypatch):
+    monkeypatch.setattr(main, "HISTOOLBOX_ENV", "development")
+    monkeypatch.setattr(main, "API_KEY", "")
+    main._check_api_key()
