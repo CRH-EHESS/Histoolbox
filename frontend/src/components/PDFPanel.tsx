@@ -108,6 +108,9 @@ export const PDFPanel = forwardRef<PDFPanelHandle, PDFPanelProps>(function PDFPa
           fileUrl={pdfData}
           plugins={[defaultLayout]}
           renderPage={renderPage}
+          // pdf.js ne compile plus les polices en JavaScript : un PDF piégé ne peut
+          // plus exécuter de code à son ouverture (CVE-2024-4367)
+          transformGetDocumentParams={(p) => ({ ...p, isEvalSupported: false })}
         />
       </Worker>
     </div>
