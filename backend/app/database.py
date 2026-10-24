@@ -170,10 +170,15 @@ def get_pending_tasks() -> list:
 
 
 def get_expired_tasks(cutoff: int) -> list:
-    """Retourne les tâches dont updated_at est antérieur à cutoff (timestamp Unix)."""
+    """Retourne les tâches terminées dont updated_at est antérieur à cutoff (timestamp Unix).
+
+    Les tâches pending et processing n'expirent jamais : updated_at n'avance pas
+    pendant l'inférence, qui peut durer des heures.
+    """
     with _connect() as conn:
         return conn.execute(
-            "SELECT * FROM tasks WHERE updated_at < ?", (cutoff,)
+            "SELECT * FROM tasks WHERE status IN ('completed', 'error') AND updated_at < ?",
+            (cutoff,),
         ).fetchall()
 
 

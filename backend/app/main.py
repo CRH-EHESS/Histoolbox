@@ -47,15 +47,17 @@ logger.add(
 )
 
 
-# Durée d'inactivité (en secondes) avant suppression automatique des fichiers d'une tâche.
-# Contrôlé par la variable CLEANUP_TTL_SECONDS (défaut : 3600 = 1 heure).
-CLEANUP_TTL_SECONDS = int(os.getenv("CLEANUP_TTL_SECONDS", "3600"))
+# Délai de conservation (en secondes) d'une tâche terminée (completed ou error) après
+# sa dernière consultation ; les tâches en attente ou en cours ne sont jamais supprimées.
+# Contrôlé par la variable CLEANUP_TTL_SECONDS (défaut : 86400 = 24 heures, en attendant
+# la durée fixée par l'ADR 0002).
+CLEANUP_TTL_SECONDS = int(os.getenv("CLEANUP_TTL_SECONDS", "86400"))
 # Intervalle entre deux passes de nettoyage (10 minutes).
 _CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "600"))
 
 
 async def _cleanup_expired_tasks() -> None:
-    """Supprime les fichiers et l'entrée SQLite des tâches inactives depuis > CLEANUP_TTL_SECONDS."""
+    """Supprime les fichiers et l'entrée SQLite des tâches terminées inactives depuis > CLEANUP_TTL_SECONDS."""
     import time
 
     cutoff = int(time.time()) - CLEANUP_TTL_SECONDS
