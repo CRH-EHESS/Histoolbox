@@ -114,7 +114,7 @@ backend/
 
 | Variable d'environnement | Valeur par défaut    | Usage                                              |
 |--------------------------|----------------------|----------------------------------------------------|
-| `HISTOOLBOX_DB_PATH`     | `./tasks.db`         | Chemin du fichier SQLite (isolation des tests)     |
+| `HISTOOLBOX_DB_PATH`     | `./tasks.db`         | Chemin du fichier SQLite (isolation des tests ; `/app/data/tasks.db` sous Docker Compose, volume partagé API / worker) |
 
 Le CORS est configuré pour autoriser `http://localhost:5173` (frontend Vite en développement).
 

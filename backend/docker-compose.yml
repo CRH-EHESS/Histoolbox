@@ -13,6 +13,9 @@ services:
       # Dans Docker Compose, Redis est accessible via le nom de service "redis".
       # Cette valeur peut être surchargée dans .env si besoin.
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      # Base SQLite dans le volume ./data : partagée avec rq_worker et
+      # conservée quand le conteneur est recréé.
+      - HISTOOLBOX_DB_PATH=${HISTOOLBOX_DB_PATH:-/app/data/tasks.db}
     depends_on:
       - redis
     volumes:
@@ -27,6 +30,7 @@ services:
     env_file: .env
     environment:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - HISTOOLBOX_DB_PATH=${HISTOOLBOX_DB_PATH:-/app/data/tasks.db}
     command: ["uv", "run", "python", "run_worker.py"]
     depends_on:
       - redis
