@@ -21,8 +21,13 @@ from app.database import (
     update_task_error,
     update_task_status,
 )
-from app.services.chandra_service import run_chandra_sync
+from app.services.chandra_service import INFERENCE_TIMEOUT_SECONDS, run_chandra_sync
 from app.services.email_service import send_notification_email
+
+# Timeout RQ = timeout Chandra + 5 min de marge pour la finalisation du job.
+# Sans job_timeout explicite, RQ applique Queue.DEFAULT_TIMEOUT (180 s) et tue le
+# work-horse bien avant la fin d'une inférence longue.
+RQ_JOB_TIMEOUT = INFERENCE_TIMEOUT_SECONDS + 300
 
 
 def process_ocr_job(
@@ -82,6 +87,28 @@ def process_ocr_job(
         logger.debug("[{}] Répertoire upload supprimé : {}", task_id, upload_dir)
 
 
+def enqueue_ocr(
+    queue,
+    task_id: str,
+    pdf_path: str,
+    output_dir: str,
+    email: Optional[str] = None,
+):
+    """Enfile le traitement OCR d'une tâche — point d'entrée unique (upload et requeue).
+
+    job_id=task_id déduplique les jobs ; job_timeout s'applique aussi aux jobs ré-enfilés.
+    """
+    return queue.enqueue(
+        process_ocr_job,
+        task_id,
+        pdf_path,
+        output_dir,
+        email,
+        job_id=task_id,
+        job_timeout=RQ_JOB_TIMEOUT,
+    )
+
+
 def requeue_pending_tasks(queue) -> int:
     """Ré-enqueue les tâches SQLite en statut 'pending' absentes de la queue Redis.
 
@@ -101,14 +128,7 @@ def requeue_pending_tasks(queue) -> int:
         if task_id in existing_ids:
             logger.debug("[{}] Déjà dans la queue Redis, skip", task_id)
             continue
-        queue.enqueue(
-            process_ocr_job,
-            task_id,
-            row["pdf_path"],
-            row["output_dir"],
-            row["email"],
-            job_id=task_id,
-        )
+        enqueue_ocr(queue, task_id, row["pdf_path"], row["output_dir"], row["email"])
         requeued += 1
         logger.info("[{}] Ré-enqueuée (tâche pending retrouvée en SQLite)", task_id)
 

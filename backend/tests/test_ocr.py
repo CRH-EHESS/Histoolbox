@@ -33,7 +33,8 @@ async def test_upload_returns_task_id(client: AsyncClient):
     assert "task_id" in body
     assert len(body["task_id"]) == 36  # format UUID
     assert len(app.state.rq_queue.enqueued) == 1
-    assert app.state.rq_queue.enqueued[0]["job_timeout"] > 180
+    from app.worker import RQ_JOB_TIMEOUT
+    assert app.state.rq_queue.enqueued[0]["job_timeout"] == RQ_JOB_TIMEOUT
 
 
 @pytest.mark.asyncio

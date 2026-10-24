@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.database import create_task, get_task
-from app.worker import process_ocr_job, requeue_pending_tasks
+from app.worker import RQ_JOB_TIMEOUT, process_ocr_job, requeue_pending_tasks
 
 
 def test_process_ocr_job_success(tmp_path):
@@ -95,3 +95,5 @@ def test_requeue_pending_tasks():
     _func, args, kwargs = queue.jobs[0]
     assert args[0] == "rq-1"
     assert kwargs["job_id"] == "rq-1"
+    # Sans job_timeout, RQ tuerait le job ré-enfilé au bout de 180 s (F4)
+    assert kwargs["job_timeout"] == RQ_JOB_TIMEOUT

@@ -213,7 +213,7 @@ graph LR
     DB["SQLite\ntasks.db"]
     FS["data/outputs/"]
 
-    API -->|"queue.enqueue(job_id=task_id)"| RD
+    API -->|"enqueue_ocr()\n(job_id=task_id, job_timeout)"| RD
     RD -->|"BLPOP"| WK
     WK -->|"UPDATE status/progress"| DB
     WK -->|"écrit résultats"| FS
@@ -363,7 +363,7 @@ backend/docker-compose.yml
 | RQ + Redis (pas Celery, pas asyncio.Queue) | API simple, worker en 1 commande, survie aux redémarrages, scaling futur |
 | `smtplib` stdlib (pas aiosmtplib) | Worker RQ est synchrone, zéro dépendance ajoutée |
 | `fakeredis` pour les tests | Intègre le round-trip RQ sans Redis réel en CI |
-| `job_id=task_id` dans `queue.enqueue` | Déduplication naturelle lors du requeue |
+| `enqueue_ocr()` pour l'upload et le requeue | `job_id=task_id` déduplique les jobs ; `job_timeout` s'applique aussi aux jobs ré-enfilés |
 | `pending` tasks survivent au redémarrage API | Cohérence avec la philosophie "zéro perte de travail" |
 | `processing` → `error` au redémarrage | L'inférence ne peut pas reprendre à mi-chemin |
 | Web Notifications API (pas Push VAPID) | Couvre le cas "autre onglet" sans HTTPS ni service worker |
