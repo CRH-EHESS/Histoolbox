@@ -96,7 +96,7 @@ La colonne « Dépend de » liste les branches à fusionner avant ; « — » si
 
 | N° | Branche | Sprint | Constats traités | Dépend de | Statut |
 |---|---|---|---|---|---|
-| 3.0 | `fix/3.0-correctifs-immediats` | S0 | F1, S1, S2, F2 (+ conservation¹), N3, F4, F3, N6, S4, N4 (+ icône¹), N8 | — | à faire |
+| 3.0 | `fix/3.0-correctifs-immediats` | S0 | F1, S1, S2, F2 (+ conservation¹), N3, F4, F3, N6, S4, N4 (+ icône¹), N8 | — | fusionnée (#3) |
 | 3.1.1 | `feat/3.1.1-persistance-etat` | S1 | F1, F5 | — | à faire |
 | 3.1.2 | `feat/3.1.2-machine-etats-worker` | S1 | F2, F3, F4 | 3.1.1 | à faire |
 | 3.1.3 | `feat/3.1.3-resilience-vllm` | S2 | N2 | 3.1.4 | à faire |
