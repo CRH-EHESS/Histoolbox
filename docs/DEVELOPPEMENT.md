@@ -289,7 +289,7 @@ Pour les constats sans reproduction (F5 par exemple : redémarrer l'API pendant 
 
 ### 5.2 Critères de sortie
 
-Chaque fin de sprint vérifie le critère de sortie correspondant (§5 de l'audit). Chaque branche citée rappelle dans sa description la partie du critère qu'elle fait avancer.
+Chaque fin de sprint vérifie le critère de sortie correspondant (§5 de l'audit). Chaque branche citée rappelle dans sa description la partie du critère qu'elle fait avancer. Le résultat de cette vérification de fin de sprint (réalisations, critères de sortie, reproductions rejouées) est consigné, une fois par sprint, dans [docs/SUIVI-SPRINTS.md](SUIVI-SPRINTS.md).
 
 | Sprint | Critère de sortie (§5 de l'audit) | Branches |
 |---|---|---|
